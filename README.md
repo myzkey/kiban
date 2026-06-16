@@ -43,17 +43,12 @@ Then run:
 
 ```sh
 kiban list
-kiban services up
-kiban services status
 kiban dev
-```
-
-In another terminal:
-
-```sh
-kiban proxy
 kiban open web
 ```
+
+Usually, `kiban dev` starts the required Docker services, local app processes, and local proxy together. Use `kiban proxy` only when you want to run the proxy by itself.
+If a Kiban proxy is already running on `proxyPort`, `kiban dev` reuses it.
 
 ## Local Smoke Test
 
@@ -71,7 +66,6 @@ In another terminal:
 
 ```sh
 cd examples/local-http
-node ../../dist/cli.js proxy
 curl -H "Host: web.localhost:8080" http://127.0.0.1:8080
 ```
 
@@ -142,7 +136,15 @@ Core inspection commands support `--json` for AI coding agents and scripts.
 }
 ```
 
-When a project lists services, `kiban dev` starts those Docker containers first, waits for their health checks, then starts the local app command. Container names use `kiban-{workspace}-{service}`.
+When a project lists services, `kiban dev` starts those Docker containers first, waits for their health checks, starts the local app commands, and then starts the local reverse proxy. Container names use `kiban-{workspace}-{service}`.
+
+If you only need the reverse proxy, run:
+
+```sh
+kiban proxy
+```
+
+If a Kiban proxy is already running, `kiban dev` reuses it. If another process is using `proxyPort`, Kiban prints a port conflict message with a `kiban kill-port` suggestion.
 
 You can also manage services directly:
 

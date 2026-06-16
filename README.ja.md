@@ -43,17 +43,12 @@ kiban init
 
 ```sh
 kiban list
-kiban services up
-kiban services status
 kiban dev
-```
-
-別ターミナルでプロキシを起動します。
-
-```sh
-kiban proxy
 kiban open web
 ```
+
+通常は `kiban dev` を実行するだけで、必要な Docker サービス、アプリケーションプロセス、ローカルプロキシがまとめて起動します。プロキシだけを単独で起動したい場合は `kiban proxy` を使います。
+すでに同じ `proxyPort` で Kiban proxy が起動している場合、`kiban dev` はそれを再利用します。
 
 ## ローカル動作確認
 
@@ -71,7 +66,6 @@ node ../../dist/cli.js dev
 
 ```sh
 cd examples/local-http
-node ../../dist/cli.js proxy
 curl -H "Host: web.localhost:8080" http://127.0.0.1:8080
 ```
 
@@ -148,7 +142,15 @@ http://web.localhost:8080
 }
 ```
 
-`projects[].services` にサービス名を書くと、`kiban dev` は先に Docker コンテナを起動し、health check を待ってからローカルアプリのコマンドを起動します。
+`projects[].services` にサービス名を書くと、`kiban dev` は先に Docker コンテナを起動し、health check を待ってからローカルアプリのコマンドを起動し、最後にローカルリバースプロキシを起動します。
+
+プロキシだけを単独で起動したい場合は以下を使います。
+
+```sh
+kiban proxy
+```
+
+すでに Kiban proxy が起動している場合、`kiban dev` はそれを再利用します。別のプロセスが `proxyPort` を使っている場合は、ポート競合メッセージと `kiban kill-port` の案内を表示します。
 
 コンテナ名は `kiban-{workspace}-{service}` 形式です。
 

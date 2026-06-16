@@ -3,6 +3,15 @@ import type { ProxyConfig } from "./types.js";
 
 export async function startProxy(config: ProxyConfig) {
   const server = http.createServer((request, response) => {
+    if (request.url === "/__kiban/proxy-health") {
+      response.writeHead(200, {
+        "content-type": "application/json",
+        "x-kiban-proxy": "1"
+      });
+      response.end(JSON.stringify({ ok: true, proxyPort: config.proxyPort }));
+      return;
+    }
+
     const host = request.headers.host?.split(":")[0];
     const project = config.projects.find((item) => item.host === host);
     if (!project) {
@@ -27,7 +36,10 @@ export async function startProxy(config: ProxyConfig) {
         }
       },
       (targetResponse) => {
-        response.writeHead(targetResponse.statusCode ?? 502, targetResponse.headers);
+        response.writeHead(targetResponse.statusCode ?? 502, {
+          ...targetResponse.headers,
+          "x-kiban-proxy": "1"
+        });
         targetResponse.pipe(response);
       }
     );

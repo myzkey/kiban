@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from "fs-extra";
 import { spawn } from "node:child_process";
+import type http from "node:http";
 import { Command } from "commander";
 import open from "open";
 import { execa } from "execa";
@@ -122,6 +123,10 @@ program
     const { config } = await loadProxyConfig();
     if (config.projects.length === 0) throw new Error("No projects configured in kiban.config.json.");
 
+    console.log("Kiban dev starting...");
+    console.log("");
+
+    await assertProxyPortUsable(config.proxyPort);
     await startProjectServices(config);
 
     for (const project of config.projects) {
@@ -129,11 +134,14 @@ program
       if (port) await assertPortAvailableForDev(port, project.name);
     }
 
+    console.log("");
+    console.log("Projects:");
     const children = config.projects.map((project) => {
-      ok(`Starting ${project.name}: ${project.command}`);
+      console.log(`  ${project.name.padEnd(14)} ${project.command}`);
       const child = spawn(project.command, {
         cwd: project.cwd,
         shell: true,
+        detached: true,
         env: process.env
       });
 
@@ -149,18 +157,33 @@ program
       return child;
     });
 
+    const proxyServer = await startDevProxy(config);
+
     const stopChildren = () => {
       for (const child of children) {
-        if (!child.killed) child.kill("SIGTERM");
+        if (child.killed) continue;
+        if (child.pid) {
+          try {
+            process.kill(-child.pid, "SIGTERM");
+          } catch {
+            child.kill("SIGTERM");
+          }
+        } else {
+          child.kill("SIGTERM");
+        }
       }
     };
-    process.once("SIGINT", () => {
+    const stopProxy = () => closeDevProxy(proxyServer);
+    const shutdown = async (code: number) => {
       stopChildren();
-      process.exit(130);
+      await stopProxy();
+      process.exit(code);
+    };
+    process.once("SIGINT", () => {
+      void shutdown(130);
     });
     process.once("SIGTERM", () => {
-      stopChildren();
-      process.exit(143);
+      void shutdown(143);
     });
 
     await new Promise<void>((resolve) => {
@@ -172,6 +195,7 @@ program
         });
       }
     });
+    await stopProxy();
   });
 
 const servicesCommand = program
@@ -357,6 +381,7 @@ program
   .description("Start the local HTTP reverse proxy from kiban.config.json.")
   .action(async () => {
     const { config } = await loadProxyConfig();
+    await assertProxyPortAvailable(config.proxyPort);
     const server = await startProxy(config);
     ok(`Proxy listening on http://localhost:${config.proxyPort}`);
     for (const project of config.projects) {
@@ -497,13 +522,14 @@ async function startNamedServices(config: Awaited<ReturnType<typeof loadProxyCon
   }
 
   const started = new Set<string>();
+  console.log("Services:");
   const startOne = async (name: string) => {
     if (started.has(name)) return;
     const service = findProxyService(config, name);
     for (const dependency of service.dependsOn ?? []) {
       await startOne(dependency);
     }
-    ok(`Starting service ${service.name}: ${service.image}`);
+    console.log(`  ${service.name.padEnd(14)} starting...`);
     await upService(config, service);
     const healthy = await waitForHealth(service.healthCheck);
     if (!healthy) {
@@ -511,6 +537,7 @@ async function startNamedServices(config: Awaited<ReturnType<typeof loadProxyCon
       error.code = 5;
       throw error;
     }
+    console.log(`  ${service.name.padEnd(14)} healthy`);
     started.add(name);
   };
 
@@ -528,4 +555,90 @@ async function assertPortAvailableForDev(port: number, projectName: string) {
   ) as Error & { code: number };
   error.code = 3;
   throw error;
+}
+
+async function assertProxyPortAvailable(port: number) {
+  const usage = await getPortUsage(port);
+  if (!usage?.pid) return;
+  const error = new Error(
+    `Port ${port} is already in use by ${usage.command ?? "unknown"} pid ${usage.pid}.\n` +
+      "Stop the existing process or change proxyPort in kiban.config.json.\n" +
+      `You can run:\n  kiban kill-port ${port} --force`
+  ) as Error & { code: number };
+  error.code = 3;
+  throw error;
+}
+
+async function assertProxyPortUsable(port: number) {
+  const usage = await getPortUsage(port);
+  if (!usage?.pid) return;
+  if (await isKibanProxyRunning(port)) return;
+
+  const error = new Error(
+    `Port ${port} is already in use by ${usage.command ?? "unknown"} pid ${usage.pid}.\n` +
+      "Stop the existing process or change proxyPort in kiban.config.json.\n" +
+      `You can run:\n  kiban kill-port ${port} --force`
+  ) as Error & { code: number };
+  error.code = 3;
+  throw error;
+}
+
+type DevProxyHandle = {
+  reused: boolean;
+  server?: http.Server;
+};
+
+async function startDevProxy(config: Awaited<ReturnType<typeof loadProxyConfig>>["config"]): Promise<DevProxyHandle> {
+  const usage = await getPortUsage(config.proxyPort);
+  if (usage?.pid) {
+    if (await isKibanProxyRunning(config.proxyPort)) {
+      console.log("");
+      console.log("Proxy:");
+      console.log(`  reusing existing Kiban proxy on http://127.0.0.1:${config.proxyPort}`);
+      printProxyUrls(config);
+      return { reused: true };
+    }
+
+    const error = new Error(
+      `Port ${config.proxyPort} is already in use by ${usage.command ?? "unknown"} pid ${usage.pid}.\n` +
+        "Stop the existing process or change proxyPort in kiban.config.json.\n" +
+        `You can run:\n  kiban kill-port ${config.proxyPort} --force`
+    ) as Error & { code: number };
+    error.code = 3;
+    throw error;
+  }
+
+  const server = await startProxy(config);
+  console.log("");
+  console.log("Proxy:");
+  console.log(`  listening on http://127.0.0.1:${config.proxyPort}`);
+  printProxyUrls(config);
+  return { reused: false, server };
+}
+
+function printProxyUrls(config: Awaited<ReturnType<typeof loadProxyConfig>>["config"]) {
+  console.log("");
+  console.log("URLs:");
+  for (const project of config.projects) {
+    console.log(`  ${proxyUrl(config, project.host).padEnd(34)} -> ${project.target}`);
+  }
+  console.log("");
+}
+
+async function closeDevProxy(handle: DevProxyHandle) {
+  if (handle.reused || !handle.server) return;
+  await new Promise<void>((resolve) => {
+    handle.server?.close(() => resolve());
+  });
+}
+
+async function isKibanProxyRunning(port: number) {
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/__kiban/proxy-health`, {
+      headers: { host: `kiban.localhost:${port}` }
+    });
+    return response.ok && response.headers.get("x-kiban-proxy") === "1";
+  } catch {
+    return false;
+  }
 }
