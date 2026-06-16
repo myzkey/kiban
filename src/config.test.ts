@@ -87,6 +87,7 @@ describe("kiban config", () => {
 
   it("infers defaults from package scripts", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "kiban-infer-"));
+    await fs.writeFile(path.join(root, "pnpm-lock.yaml"), "");
     await fs.writeJson(path.join(root, "package.json"), {
       name: "@demo/admin-app",
       scripts: {
@@ -104,6 +105,79 @@ describe("kiban config", () => {
         command: "pnpm dev"
       })
     );
+  });
+
+  it("infers package manager, framework command, and port from env files", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "kiban-env-"));
+    await fs.writeFile(path.join(root, "bun.lock"), "");
+    await fs.writeJson(path.join(root, "package.json"), {
+      name: "studio",
+      dependencies: {
+        vite: "^6.0.0"
+      }
+    });
+    await fs.writeFile(path.join(root, ".env.development"), "PORT=6123\n");
+
+    const config = await buildInitialProxyConfig({}, root);
+
+    expect(config.projects[0]).toEqual(
+      expect.objectContaining({
+        name: "studio",
+        host: "studio.localhost",
+        target: "http://localhost:6123",
+        command: "bun vite --host 127.0.0.1"
+      })
+    );
+  });
+
+  it("infers backend commands", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "kiban-backend-"));
+    await fs.writeFile(path.join(root, "Gemfile"), "gem 'rails'\n");
+    await fs.ensureDir(path.join(root, "config"));
+    await fs.writeFile(path.join(root, "config", "puma.rb"), 'port ENV.fetch("PORT") { 4010 }\n');
+
+    const config = await buildInitialProxyConfig({}, root);
+
+    expect(config.projects[0]).toEqual(
+      expect.objectContaining({
+        name: path.basename(root),
+        target: "http://localhost:4010",
+        command: "bin/rails server"
+      })
+    );
+  });
+
+  it("infers multiple projects from monorepo app folders", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "kiban-monorepo-"));
+    await fs.writeFile(path.join(root, "pnpm-workspace.yaml"), "packages:\n  - apps/*\n");
+    await fs.writeFile(path.join(root, "pnpm-lock.yaml"), "");
+    await fs.ensureDir(path.join(root, "apps", "web"));
+    await fs.ensureDir(path.join(root, "apps", "api"));
+    await fs.writeJson(path.join(root, "apps", "web", "package.json"), {
+      name: "web",
+      scripts: { dev: "next dev" }
+    });
+    await fs.writeJson(path.join(root, "apps", "api", "package.json"), {
+      name: "api",
+      scripts: { "dev:api": "vite --host 127.0.0.1" }
+    });
+
+    const config = await buildInitialProxyConfig({}, root);
+
+    expect(config.projects).toEqual([
+      expect.objectContaining({
+        name: "api",
+        cwd: "apps/api",
+        command: "pnpm dev:api",
+        target: "http://localhost:5173"
+      }),
+      expect.objectContaining({
+        name: "web",
+        cwd: "apps/web",
+        command: "pnpm dev",
+        target: "http://localhost:3000"
+      })
+    ]);
   });
 
   it("infers services from compose files", async () => {
@@ -163,6 +237,53 @@ describe("kiban config", () => {
         image: "redis:7",
         ports: ["6379:6379"],
         dependsOn: ["postgres"]
+      })
+    ]);
+    expect(config.projects[0]?.services).toEqual(["postgres", "redis"]);
+  });
+
+  it("infers service health checks and project dependencies from compose and env", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "kiban-compose-health-"));
+    await fs.writeJson(path.join(root, "package.json"), {
+      name: "with-urls",
+      scripts: {
+        dev: "next dev"
+      }
+    });
+    await fs.writeFile(path.join(root, ".env.local"), "DATABASE_URL=postgres://postgres:postgres@localhost:5432/app\nREDIS_URL=redis://localhost:6379\n");
+    await fs.writeFile(
+      path.join(root, "docker-compose.yml"),
+      [
+        "services:",
+        "  postgres:",
+        "    image: postgres:16",
+        "    ports:",
+        '      - "5432:5432"',
+        "  redis:",
+        "    image: redis:7",
+        "    ports:",
+        '      - "6379:6379"',
+        "  mailpit:",
+        "    image: axllent/mailpit:latest",
+        "    ports:",
+        '      - "8025:8025"'
+      ].join("\n")
+    );
+
+    const config = await buildInitialProxyConfig({}, root);
+
+    expect(config.services).toEqual([
+      expect.objectContaining({
+        name: "postgres",
+        healthCheck: expect.objectContaining({ type: "tcp", port: 5432 })
+      }),
+      expect.objectContaining({
+        name: "redis",
+        healthCheck: expect.objectContaining({ type: "tcp", port: 6379 })
+      }),
+      expect.objectContaining({
+        name: "mailpit",
+        healthCheck: expect.objectContaining({ type: "http", url: "http://127.0.0.1:8025" })
       })
     ]);
     expect(config.projects[0]?.services).toEqual(["postgres", "redis"]);

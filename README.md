@@ -25,7 +25,7 @@ Create a config in your project directory:
 kiban init
 ```
 
-Kiban infers sensible defaults from `package.json`, common dev scripts, simple server files, and Compose files when it can.
+Kiban infers sensible defaults from package managers, `package.json`, dev scripts, `.env` ports, common frameworks, simple backend/server files, monorepo app folders, and Compose files when it can.
 
 Then start the environment:
 
@@ -155,6 +155,27 @@ If a Kiban proxy is already running on `proxyPort`, `kiban dev` reuses it. If an
 ```sh
 kiban init --project web --host web.localhost --target http://localhost:3000 --cmd "pnpm dev"
 ```
+
+Preview inferred config without saving it:
+
+```sh
+kiban init --detect
+```
+
+Force an interactive review:
+
+```sh
+kiban init --interactive
+```
+
+Init can detect common setups:
+
+- Package managers: pnpm, npm, yarn, bun
+- Frontend frameworks: Next.js, Vite, Astro, Nuxt, Remix
+- Backend projects: Rails, Laravel, Django, Go, Rust, simple Node servers
+- Monorepos: `pnpm-workspace.yaml`, `turbo.json`, `nx.json`, `apps/*`, `packages/*`, `services/*`
+- Environment ports: `.env`, `.env.local`, `.env.development`
+- Compose services: images, ports, environment, volumes, dependencies, and common health checks
 
 ## Troubleshooting
 

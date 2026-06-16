@@ -3,12 +3,7 @@ import crypto from "node:crypto";
 import readline from "node:readline/promises";
 import fs from "fs-extra";
 import YAML from "yaml";
-import {
-  proxyConfigSchema,
-  type ProxyConfig,
-  type ProxyProjectConfig,
-  type ServiceConfig
-} from "./types.js";
+import { proxyConfigSchema, type ProxyConfig, type ProxyProjectConfig, type ServiceConfig } from "./types.js";
 import { ensureKibanDirs, expandHome, workspaceIndexFile, workspacesDir } from "./paths.js";
 
 export class ConfigError extends Error {
@@ -61,12 +56,32 @@ export type InitialProxyConfigAnswers = {
   cwd?: string;
 };
 
-export async function writeInitialProxyConfig(_targetPath?: string, answers: InitialProxyConfigAnswers = {}, rootDir = process.cwd()) {
+type BuildInitialProxyConfigOptions = {
+  interactive?: boolean;
+};
+
+type PackageJson = {
+  name?: string;
+  scripts?: Record<string, string>;
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+};
+
+type InferredProject = {
+  name: string;
+  host: string;
+  target: string;
+  command: string;
+  cwd: string;
+  services: string[];
+};
+
+export async function writeInitialProxyConfig(_targetPath?: string, answers: InitialProxyConfigAnswers = {}, rootDir = process.cwd(), options: BuildInitialProxyConfigOptions = {}) {
   const root = await resolveWorkspaceRoot(rootDir);
   const existing = await findProxyWorkspace(root);
   if (existing?.root === root) throw new ConfigError(`Kiban workspace already exists for ${root}.`);
 
-  const config = await buildInitialProxyConfig(answers, root);
+  const config = await buildInitialProxyConfig(answers, root, options);
   const configPath = workspaceConfigPath(root, config.workspace);
   await fs.ensureDir(path.dirname(configPath));
   await fs.writeJson(configPath, config, { spaces: 2 });
@@ -74,33 +89,43 @@ export async function writeInitialProxyConfig(_targetPath?: string, answers: Ini
   return configPath;
 }
 
-export async function buildInitialProxyConfig(answers: InitialProxyConfigAnswers = {}, rootDir = process.cwd()): Promise<ProxyConfig> {
+export async function buildInitialProxyConfig(answers: InitialProxyConfigAnswers = {}, rootDir = process.cwd(), options: BuildInitialProxyConfigOptions = {}): Promise<ProxyConfig> {
   const defaults = await inferInitialProxyConfigDefaults(rootDir);
   const inferredServices = await inferComposeServices(rootDir);
+  const inferredProjects = await inferProjects(rootDir, inferredServices);
 
-  const resolved = process.stdin.isTTY && process.stdout.isTTY && Object.keys(answers).length === 0 ? await askInitialProxyConfig(defaults) : answers;
+  const shouldPrompt = options.interactive ?? (process.stdin.isTTY && process.stdout.isTTY && Object.keys(answers).length === 0);
+  const resolved = shouldPrompt ? await askInitialProxyConfig({ ...defaults, ...stripUndefinedAnswers(answers) }) : answers;
+  const projects =
+    Object.keys(answers).length === 0
+      ? inferredProjects
+      : [
+          {
+            name: resolved.projectName ?? defaults.projectName,
+            host: resolved.host ?? defaults.host,
+            target: resolved.target ?? defaults.target,
+            command: resolved.command ?? defaults.command,
+            cwd: resolved.cwd ?? defaults.cwd,
+            services: inferredServices.map((service) => service.name)
+          }
+        ];
   return proxyConfigSchema.parse({
     workspace: resolved.workspace ?? defaults.workspace,
     proxyPort: resolved.proxyPort ?? defaults.proxyPort,
     services: inferredServices,
-    projects: [
-      {
-        name: resolved.projectName ?? defaults.projectName,
-        host: resolved.host ?? defaults.host,
-        target: resolved.target ?? defaults.target,
-        command: resolved.command ?? defaults.command,
-        cwd: resolved.cwd ?? defaults.cwd,
-        services: inferredServices.map((service) => service.name)
-      }
-    ]
+    projects
   });
+}
+
+function stripUndefinedAnswers(answers: InitialProxyConfigAnswers): Partial<Required<InitialProxyConfigAnswers>> {
+  return Object.fromEntries(Object.entries(answers).filter(([, value]) => value !== undefined)) as Partial<Required<InitialProxyConfigAnswers>>;
 }
 
 async function inferInitialProxyConfigDefaults(rootDir: string): Promise<Required<InitialProxyConfigAnswers>> {
   const root = path.resolve(rootDir);
   const workspace = path.basename(root) || "default";
   const packageJson = await readPackageJson(root);
-  const command = inferCommand(root, packageJson);
+  const command = await inferCommand(root, packageJson);
   const projectName = inferProjectName(packageJson);
   const port = await inferTargetPort(root, command);
 
@@ -117,28 +142,138 @@ async function inferInitialProxyConfigDefaults(rootDir: string): Promise<Require
 
 async function readPackageJson(root: string) {
   try {
-    return (await fs.readJson(path.join(root, "package.json"))) as { name?: string; scripts?: Record<string, string> };
+    return (await fs.readJson(path.join(root, "package.json"))) as PackageJson;
   } catch {
     return null;
   }
 }
 
-function inferCommand(root: string, packageJson: { scripts?: Record<string, string> } | null) {
-  if (packageJson?.scripts?.dev) return "pnpm dev";
-  if (fs.existsSync(path.join(root, "server.mjs"))) return "node server.mjs";
-  if (fs.existsSync(path.join(root, "server.js"))) return "node server.js";
-  return "pnpm dev";
+async function inferProjects(rootDir: string, services: ServiceConfig[]): Promise<InferredProject[]> {
+  const root = path.resolve(rootDir);
+  const candidates = await findProjectRoots(root);
+  const projects = await Promise.all(candidates.map((candidate) => inferProject(root, candidate, services)));
+  return projects.length > 0 ? projects : [await inferProject(root, root, services)];
 }
 
-function inferProjectName(packageJson: { name?: string } | null) {
-  const rawName = packageJson?.name?.split("/").pop() ?? "web";
+async function inferProject(workspaceRoot: string, projectRoot: string, services: ServiceConfig[]): Promise<InferredProject> {
+  const packageJson = await readPackageJson(projectRoot);
+  const command = await inferCommand(projectRoot, packageJson);
+  const projectName = inferProjectName(packageJson, inferProjectNameFallback(projectRoot));
+  const port = await inferTargetPort(projectRoot, command);
+  return {
+    name: projectName,
+    host: `${projectName}.localhost`,
+    target: `http://localhost:${port}`,
+    command,
+    cwd: relativeCwd(workspaceRoot, projectRoot),
+    services: inferProjectServices(projectRoot, services)
+  };
+}
+
+function inferProjectNameFallback(projectRoot: string) {
+  if (fs.existsSync(path.join(projectRoot, "server.mjs")) || fs.existsSync(path.join(projectRoot, "server.js"))) return "web";
+  return path.basename(projectRoot);
+}
+
+async function findProjectRoots(root: string) {
+  if (!(await isMonorepoRoot(root))) return [root];
+  const patterns = ["apps", "packages", "services"];
+  const roots: string[] = [];
+  for (const directory of patterns) {
+    const parent = path.join(root, directory);
+    if (!(await fs.pathExists(parent))) continue;
+    for (const entry of await fs.readdir(parent, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const candidate = path.join(parent, entry.name);
+      if (await looksLikeProjectRoot(candidate)) roots.push(candidate);
+    }
+  }
+  return roots.length > 0 ? roots.sort() : [root];
+}
+
+async function isMonorepoRoot(root: string) {
+  return (
+    (await fs.pathExists(path.join(root, "pnpm-workspace.yaml"))) ||
+    (await fs.pathExists(path.join(root, "turbo.json"))) ||
+    (await fs.pathExists(path.join(root, "nx.json"))) ||
+    (await fs.pathExists(path.join(root, "lerna.json")))
+  );
+}
+
+async function looksLikeProjectRoot(root: string) {
+  for (const fileName of ["package.json", "Gemfile", "composer.json", "manage.py", "pyproject.toml", "go.mod", "Cargo.toml", "main.go"]) {
+    if (await fs.pathExists(path.join(root, fileName))) return true;
+  }
+  return false;
+}
+
+async function inferCommand(root: string, packageJson: PackageJson | null) {
+  const packageManager = await inferPackageManager(root);
+  const scripts = packageJson?.scripts ?? {};
+  for (const script of ["dev", "dev:web", "dev:api", "start:dev", "serve", "preview"]) {
+    if (scripts[script]) return packageScriptCommand(packageManager, script);
+  }
+  const frameworkCommand = inferFrameworkCommand(packageManager, packageJson);
+  if (frameworkCommand) return frameworkCommand;
+  if (fs.existsSync(path.join(root, "server.mjs"))) return "node server.mjs";
+  if (fs.existsSync(path.join(root, "server.js"))) return "node server.js";
+  if (fs.existsSync(path.join(root, "Gemfile")) || fs.existsSync(path.join(root, "bin", "rails"))) return "bin/rails server";
+  if (fs.existsSync(path.join(root, "artisan"))) return "php artisan serve";
+  if (fs.existsSync(path.join(root, "manage.py"))) return "python manage.py runserver";
+  if (fs.existsSync(path.join(root, "go.mod")) || fs.existsSync(path.join(root, "main.go"))) return "go run .";
+  if (fs.existsSync(path.join(root, "Cargo.toml"))) return "cargo run";
+  return `${packageManager} dev`;
+}
+
+async function inferPackageManager(root: string) {
+  let directory = path.resolve(root);
+  while (true) {
+    if (await fs.pathExists(path.join(directory, "pnpm-lock.yaml"))) return "pnpm";
+    if ((await fs.pathExists(path.join(directory, "bun.lock"))) || (await fs.pathExists(path.join(directory, "bun.lockb")))) return "bun";
+    if (await fs.pathExists(path.join(directory, "yarn.lock"))) return "yarn";
+    if (await fs.pathExists(path.join(directory, "package-lock.json"))) return "npm";
+    const parent = path.dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+  return "pnpm";
+}
+
+function packageScriptCommand(packageManager: string, script: string) {
+  return packageManager === "npm" ? `npm run ${script}` : `${packageManager} ${script}`;
+}
+
+function inferFrameworkCommand(packageManager: string, packageJson: PackageJson | null) {
+  const deps = { ...(packageJson?.dependencies ?? {}), ...(packageJson?.devDependencies ?? {}) };
+  if (deps.next) return `${packageManager} next dev`;
+  if (deps.vite) return `${packageManager} vite --host 127.0.0.1`;
+  if (deps.astro) return `${packageManager} astro dev`;
+  if (deps.nuxt) return `${packageManager} nuxt dev`;
+  if (deps["@remix-run/dev"]) return `${packageManager} remix dev`;
+  return null;
+}
+
+function inferProjectName(packageJson: { name?: string } | null, fallback = "web") {
+  const rawName = packageJson?.name?.split("/").pop() ?? fallback;
   const name = rawName.replace(/[^a-zA-Z0-9-]/g, "-").replace(/^-+|-+$/g, "");
   return name || "web";
 }
 
 async function inferTargetPort(root: string, command: string) {
   const packageJson = await readPackageJson(root);
-  const commandText = [command, packageJson?.scripts?.dev ?? "", await readIfExists(path.join(root, "server.mjs")), await readIfExists(path.join(root, "server.js"))].join("\n");
+  const env = await readEnvFiles(root);
+  const commandText = [
+    command,
+    Object.values(packageJson?.scripts ?? {}).join("\n"),
+    Object.entries(env)
+      .map(([key, value]) => `${key}=${value}`)
+      .join("\n"),
+    await readIfExists(path.join(root, "server.mjs")),
+    await readIfExists(path.join(root, "server.js")),
+    await readIfExists(path.join(root, "config", "puma.rb")),
+    await readIfExists(path.join(root, "vite.config.ts")),
+    await readIfExists(path.join(root, "vite.config.js"))
+  ].join("\n");
 
   const envPort = commandText.match(/\bPORT\s*=\s*(\d{2,5})\b/);
   if (envPort) return Number(envPort[1]);
@@ -149,10 +284,53 @@ async function inferTargetPort(root: string, command: string) {
   const listenPort = commandText.match(/listen\(\s*(?:Number\(process\.env\.PORT\s*\?\?\s*)?['"`]?(\d{2,5})['"`]?/);
   if (listenPort) return Number(listenPort[1]);
 
+  const railsPort = commandText.match(/\bport\s+ENV\.fetch\(["']PORT["']\)\s*\{\s*(\d{2,5})\s*\}/);
+  if (railsPort) return Number(railsPort[1]);
+
+  if (/\b(nuxt)\b/.test(commandText)) return 3000;
   if (/\b(vite|vite\s+)/.test(commandText)) return 5173;
   if (/\b(astro)\b/.test(commandText)) return 4321;
   if (/\b(next|next\s+dev)\b/.test(commandText)) return 3000;
+  if (/\b(remix|react-router)\b/.test(commandText)) return 5173;
+  if (/\b(php artisan serve)\b/.test(commandText)) return 8000;
+  if (/\b(python manage\.py runserver)\b/.test(commandText)) return 8000;
   return 3000;
+}
+
+async function readEnvFiles(root: string) {
+  const env: Record<string, string> = {};
+  for (const fileName of [".env", ".env.local", ".env.development", ".env.development.local"]) {
+    const text = await readIfExists(path.join(root, fileName));
+    for (const line of text.split(/\r?\n/)) {
+      const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+      if (!match) continue;
+      env[match[1]] = match[2].replace(/^['"]|['"]$/g, "");
+    }
+  }
+  return env;
+}
+
+function inferProjectServices(projectRoot: string, services: ServiceConfig[]) {
+  if (services.length === 0) return [];
+  const envText = [
+    fs.existsSync(path.join(projectRoot, ".env")) ? fs.readFileSync(path.join(projectRoot, ".env"), "utf8") : "",
+    fs.existsSync(path.join(projectRoot, ".env.local")) ? fs.readFileSync(path.join(projectRoot, ".env.local"), "utf8") : "",
+    fs.existsSync(path.join(projectRoot, ".env.development")) ? fs.readFileSync(path.join(projectRoot, ".env.development"), "utf8") : ""
+  ].join("\n");
+  const matched = services.filter((service) => {
+    const haystack = `${service.name}\n${service.image}\n${service.ports.join("\n")}`.toLowerCase();
+    const text = envText.toLowerCase();
+    if (text.includes(service.name.toLowerCase())) return true;
+    if (/database_url|postgres|mysql/.test(text) && /(postgres|mysql|mariadb)/.test(haystack)) return true;
+    if (/redis_url|redis/.test(text) && /redis/.test(haystack)) return true;
+    return false;
+  });
+  return matched.length > 0 ? matched.map((service) => service.name) : services.map((service) => service.name);
+}
+
+function relativeCwd(workspaceRoot: string, projectRoot: string) {
+  const relative = path.relative(workspaceRoot, projectRoot);
+  return relative.length > 0 ? relative : ".";
 }
 
 async function readIfExists(filePath: string) {
@@ -181,7 +359,7 @@ async function inferComposeServices(rootDir: string) {
           env: normalizeComposeEnv(value.environment),
           volumes: normalizeComposeList(value.volumes).map(String),
           dependsOn: normalizeDependsOn(value.depends_on),
-          healthCheck: inferComposeHealthCheck(value.healthcheck)
+          healthCheck: inferComposeHealthCheck(name, value.image, value.healthcheck, value.ports)
         }
       ];
     })
@@ -231,10 +409,36 @@ function normalizeComposePortObject(port: Record<string, unknown>) {
   return "";
 }
 
-function inferComposeHealthCheck(value: unknown) {
-  if (!isRecord(value)) return undefined;
-  const test = Array.isArray(value.test) ? value.test.map(String).join(" ") : typeof value.test === "string" ? value.test : undefined;
-  return test ? { type: "command" as const, command: test } : undefined;
+function inferComposeHealthCheck(name: string, image: string, value: unknown, ports: unknown) {
+  const test = isRecord(value) ? (Array.isArray(value.test) ? value.test.map(String).join(" ") : typeof value.test === "string" ? value.test : undefined) : undefined;
+  if (test) return { type: "command" as const, command: test };
+  const imageName = `${name} ${image}`.toLowerCase();
+  const inferredPort = firstPublishedPort(ports);
+  if (/(postgres|mysql|mariadb|redis)/.test(imageName)) {
+    return { type: "tcp" as const, host: "127.0.0.1", port: inferredPort ?? defaultServicePort(imageName) };
+  }
+  if (/(meilisearch|mailpit|mailhog)/.test(imageName)) {
+    const port = inferredPort ?? defaultServicePort(imageName);
+    return { type: "http" as const, url: `http://127.0.0.1:${port}` };
+  }
+  return undefined;
+}
+
+function firstPublishedPort(ports: unknown) {
+  const first = normalizeComposeList(ports)[0];
+  if (!first) return undefined;
+  const value = first.includes(":") ? first.split(":")[0] : first;
+  const port = Number(value);
+  return Number.isFinite(port) ? port : undefined;
+}
+
+function defaultServicePort(imageName: string) {
+  if (imageName.includes("postgres")) return 5432;
+  if (imageName.includes("mysql") || imageName.includes("mariadb")) return 3306;
+  if (imageName.includes("redis")) return 6379;
+  if (imageName.includes("meilisearch")) return 7700;
+  if (imageName.includes("mailpit") || imageName.includes("mailhog")) return 8025;
+  return 80;
 }
 
 function removeUndefined<T extends Record<string, unknown>>(value: T) {

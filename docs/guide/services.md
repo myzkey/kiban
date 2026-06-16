@@ -11,6 +11,8 @@ Kiban can start and stop Docker services defined in the workspace config.
 - `docker.yaml`
 - `docker.yml`
 
+It reads service images, ports, environment, volumes, and `depends_on`. For common services such as PostgreSQL, MySQL, Redis, Meilisearch, Mailpit, and MailHog, Kiban can also infer a simple health check when the Compose file does not define one.
+
 ```sh
 kiban services up
 kiban services status

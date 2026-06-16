@@ -25,7 +25,7 @@ Kiban は、ローカル開発環境を 1 コマンドで起動するための C
 kiban init
 ```
 
-Kiban は `package.json`、一般的な dev script、単純な server file、Compose file から設定をできるだけ推測します。
+Kiban は package manager、`package.json`、dev script、`.env` の port、よく使われる framework、backend/server file、monorepo の app folder、Compose file から設定をできるだけ推測します。
 
 開発環境を起動します。
 
@@ -155,6 +155,27 @@ kiban proxy
 ```sh
 kiban init --project web --host web.localhost --target http://localhost:3000 --cmd "pnpm dev"
 ```
+
+保存せずに推測結果だけ確認できます。
+
+```sh
+kiban init --detect
+```
+
+対話形式で確認しながら作ることもできます。
+
+```sh
+kiban init --interactive
+```
+
+init が検知できる主なもの:
+
+- package manager: pnpm, npm, yarn, bun
+- frontend framework: Next.js, Vite, Astro, Nuxt, Remix
+- backend project: Rails, Laravel, Django, Go, Rust, simple Node server
+- monorepo: `pnpm-workspace.yaml`, `turbo.json`, `nx.json`, `apps/*`, `packages/*`, `services/*`
+- port: `.env`, `.env.local`, `.env.development`
+- Compose services: image, ports, environment, volumes, depends_on, common health check
 
 ## 困ったとき
 

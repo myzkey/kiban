@@ -54,6 +54,33 @@ describe("cli smoke", () => {
     });
   });
 
+  it("prints inferred init config without writing when using init --detect", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "kiban-detect-"));
+    process.env.KIBAN_HOME = await fs.mkdtemp(path.join(os.tmpdir(), "kiban-home-"));
+    process.chdir(cwd);
+    await fs.writeJson(path.join(cwd, "package.json"), {
+      name: "detected",
+      scripts: {
+        dev: "vite --host 127.0.0.1"
+      }
+    });
+
+    const output = await runModernCommand(["init", "--detect"]);
+
+    expect(JSON.parse(output)).toEqual(
+      expect.objectContaining({
+        workspace: path.basename(cwd),
+        projects: [
+          expect.objectContaining({
+            name: "detected",
+            command: "pnpm dev",
+            target: "http://localhost:5173"
+          })
+        ]
+      })
+    );
+  });
+
   it("keeps old project-file commands out of the main help", () => {
     const program = new Command();
     registerModernCommands(program);

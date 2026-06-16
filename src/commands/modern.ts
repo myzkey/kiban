@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import open from "open";
-import { findProxyProject, loadProxyConfig, writeInitialProxyConfig } from "../config.js";
+import { buildInitialProxyConfig, findProxyProject, loadProxyConfig, writeInitialProxyConfig } from "../config.js";
 import { runDev } from "../dev.js";
 import { assertProxyPortAvailable } from "../proxy-runtime.js";
 import { getServiceStatuses, showServiceLogs, startServices, stopServices } from "../service-runtime.js";
@@ -18,9 +18,11 @@ export function registerModernCommands(program: Command) {
     .option("--target <url>")
     .option("--cmd <command>")
     .option("--cwd <path>")
+    .option("--detect", "Print the inferred config without writing it.")
+    .option("--interactive", "Review inferred values interactively before writing.")
     .description("Create a Kiban config for this local workspace.")
     .action(async (options) => {
-      const configPath = await writeInitialProxyConfig(undefined, {
+      const answers = {
         workspace: options.workspace,
         proxyPort: options.proxyPort ? Number(options.proxyPort) : undefined,
         projectName: options.project,
@@ -28,7 +30,12 @@ export function registerModernCommands(program: Command) {
         target: options.target,
         command: options.cmd,
         cwd: options.cwd
-      });
+      };
+      if (options.detect) {
+        printJson(await buildInitialProxyConfig(answers, process.cwd(), { interactive: false }));
+        return;
+      }
+      const configPath = await writeInitialProxyConfig(undefined, answers, process.cwd(), { interactive: Boolean(options.interactive) });
       ok(`Created ${configPath}`);
     });
 
