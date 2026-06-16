@@ -174,6 +174,7 @@ Common fixes:
 Until Kiban is published as a package, install it from the repository:
 
 ```sh
+node --version # v24 or newer
 pnpm install
 pnpm build
 pnpm link --global
