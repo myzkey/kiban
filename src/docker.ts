@@ -1,7 +1,11 @@
 import { execa } from "execa";
-import type { KibanConfig, ServiceConfig } from "./types.js";
+import type { ServiceConfig } from "./types.js";
 
-export function containerName(config: KibanConfig, service: ServiceConfig) {
+type DockerStackConfig = {
+  workspace: string;
+};
+
+export function containerName(config: DockerStackConfig, service: ServiceConfig) {
   return `kiban-${config.workspace}-${service.name}`.replace(/[^a-zA-Z0-9_.-]/g, "-");
 }
 
@@ -14,7 +18,7 @@ export async function isDockerRunning() {
   }
 }
 
-export async function serviceRunning(config: KibanConfig, service: ServiceConfig) {
+export async function serviceRunning(config: DockerStackConfig, service: ServiceConfig) {
   try {
     const { stdout } = await execa("docker", ["inspect", "-f", "{{.State.Running}}", containerName(config, service)]);
     return stdout.trim() === "true";
@@ -23,7 +27,7 @@ export async function serviceRunning(config: KibanConfig, service: ServiceConfig
   }
 }
 
-export async function upService(config: KibanConfig, service: ServiceConfig) {
+export async function upService(config: DockerStackConfig, service: ServiceConfig) {
   if (await serviceRunning(config, service)) return;
 
   const name = containerName(config, service);
@@ -45,7 +49,7 @@ export async function upService(config: KibanConfig, service: ServiceConfig) {
   }
 }
 
-export async function downService(config: KibanConfig, service: ServiceConfig) {
+export async function downService(config: DockerStackConfig, service: ServiceConfig) {
   const name = containerName(config, service);
   try {
     await execa("docker", ["stop", name]);

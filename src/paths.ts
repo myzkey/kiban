@@ -1,8 +1,11 @@
-import os from "node:os";
 import path from "node:path";
+import os from "node:os";
 import fs from "fs-extra";
 
-export const KIBAN_DIR = path.join(os.homedir(), ".kiban");
+const configuredKibanHome = process.env.KIBAN_HOME;
+export const KIBAN_DIR = configuredKibanHome
+  ? path.resolve(expandHome(configuredKibanHome))
+  : path.join(os.homedir(), ".kiban");
 export const LOG_DIR = path.join(KIBAN_DIR, "logs");
 export const PID_DIR = path.join(KIBAN_DIR, "pids");
 export const STATE_DIR = path.join(KIBAN_DIR, "state");

@@ -63,7 +63,30 @@ export async function startProject(config: KibanConfig, project: ProjectConfig) 
   };
   await writeState(state);
 
-  await waitForHealth(project.healthCheck, project.url);
+  const healthy = await waitForHealth(project.healthCheck, project.url);
+  if (!healthy) {
+    try {
+      process.kill(-child.pid, "SIGTERM");
+    } catch {
+      try {
+        process.kill(child.pid, "SIGTERM");
+      } catch {
+        // The child may have already exited after a failed bind or startup error.
+      }
+    }
+    await removePid(project.name);
+    const state = await readState();
+    state.projects[project.name] = {
+      ...state.projects[project.name],
+      pid: child.pid,
+      status: "stopped",
+      lastStoppedAt: new Date().toISOString()
+    };
+    await writeState(state);
+    const error = new Error(`Project health check failed: ${project.name}`) as Error & { code: number };
+    error.code = 5;
+    throw error;
+  }
   return { status: "running" as RuntimeStatus, pid: child.pid, logFile };
 }
 

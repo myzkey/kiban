@@ -1,12 +1,12 @@
 # Kiban
 
-[日本語版 README](./README.ja.md)
+[English README](./README.md)
 
-Kiban is an AI-friendly local development stack manager.
+Kiban は、AI エージェントからも扱いやすいローカル開発環境マネージャーです。
 
-It starts local app processes such as Next.js, Vite, Rails, Laravel, and API servers while managing local URLs and dependent Docker services such as PostgreSQL, MySQL, Redis, Mailhog, and MinIO from one `kiban.config.json`.
+Next.js、Vite、Rails、Laravel、API サーバーなどのローカルプロセスと、PostgreSQL、MySQL、Redis、Mailhog、MinIO などの Docker サービスを `kiban.config.json` からまとめて管理します。
 
-## Install
+## インストール
 
 ```sh
 pnpm install
@@ -14,13 +14,13 @@ pnpm build
 pnpm link --global
 ```
 
-## Quick Start
+## クイックスタート
 
 ```sh
 kiban init
 ```
 
-Edit `kiban.config.json`:
+生成された `kiban.config.json` を編集します。
 
 ```json
 {
@@ -39,7 +39,7 @@ Edit `kiban.config.json`:
 }
 ```
 
-Then run:
+起動します。
 
 ```sh
 kiban list
@@ -48,16 +48,16 @@ kiban services status
 kiban dev
 ```
 
-In another terminal:
+別ターミナルでプロキシを起動します。
 
 ```sh
 kiban proxy
 kiban open web
 ```
 
-## Local Smoke Test
+## ローカル動作確認
 
-You can verify the CLI without Docker by using the bundled HTTP server example.
+Docker なしで試せるサンプルがあります。
 
 ```sh
 pnpm install
@@ -67,7 +67,7 @@ node ../../dist/cli.js list
 node ../../dist/cli.js dev
 ```
 
-In another terminal:
+別ターミナルで実行します。
 
 ```sh
 cd examples/local-http
@@ -75,7 +75,13 @@ node ../../dist/cli.js proxy
 curl -H "Host: web.localhost:8080" http://127.0.0.1:8080
 ```
 
-## Commands
+ブラウザでは以下を開きます。
+
+```text
+http://web.localhost:8080
+```
+
+## コマンド
 
 - `kiban init`
 - `kiban list`
@@ -96,11 +102,11 @@ curl -H "Host: web.localhost:8080" http://127.0.0.1:8080
 - `kiban kill-port`
 - `kiban edit`
 
-Core inspection commands support `--json` for AI coding agents and scripts.
+主要な確認系コマンドは `--json` に対応しています。
 
-## Port And Proxy Configuration
+## ポートとプロキシ設定
 
-`kiban.config.json` is the primary config file for port and URL management:
+`kiban.config.json` が、ポート・URL 管理のメイン設定ファイルです。
 
 ```json
 {
@@ -142,9 +148,11 @@ Core inspection commands support `--json` for AI coding agents and scripts.
 }
 ```
 
-When a project lists services, `kiban dev` starts those Docker containers first, waits for their health checks, then starts the local app command. Container names use `kiban-{workspace}-{service}`.
+`projects[].services` にサービス名を書くと、`kiban dev` は先に Docker コンテナを起動し、health check を待ってからローカルアプリのコマンドを起動します。
 
-You can also manage services directly:
+コンテナ名は `kiban-{workspace}-{service}` 形式です。
+
+サービスだけを操作することもできます。
 
 ```sh
 kiban services up
@@ -152,9 +160,9 @@ kiban services status
 kiban services down
 ```
 
-## Stack Configuration
+## Stack 設定
 
-`kiban.yml` is still supported by the stack commands such as `up`, `down`, `status`, and `logs`:
+`kiban.yml` も、`up`、`down`、`status`、`logs` などの stack 系コマンド向けに引き続きサポートしています。
 
 ```yaml
 workspace: default
@@ -179,19 +187,19 @@ services:
       port: 5432
 ```
 
-Kiban stores runtime data in `~/.kiban`:
+Kiban の内部データはデフォルトで `~/.kiban` に保存されます。
 
 - `~/.kiban/logs`
 - `~/.kiban/pids`
 - `~/.kiban/state`
 - `~/.kiban/cache`
 
-Set `KIBAN_HOME` when you want to keep runtime data somewhere else:
+保存先を変えたい場合は `KIBAN_HOME` を指定します。
 
 ```sh
 KIBAN_HOME=/tmp/kiban-dev kiban status
 ```
 
-## Security
+## セキュリティ
 
-Kiban runs commands from your local `kiban.config.json` or `kiban.yml`. Only use configuration files that you trust.
+Kiban はローカルの `kiban.config.json` または `kiban.yml` に書かれたコマンドを実行します。信頼できる設定ファイルだけを使ってください。

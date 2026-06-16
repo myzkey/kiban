@@ -39,10 +39,28 @@ export const kibanConfigSchema = z.object({
   services: z.array(serviceSchema).default([])
 });
 
+export const proxyProjectSchema = z.object({
+  name: z.string().min(1),
+  host: z.string().min(1),
+  target: z.string().url(),
+  command: z.string().min(1),
+  cwd: z.string().default("."),
+  services: z.array(z.string()).default([]).optional()
+});
+
+export const proxyConfigSchema = z.object({
+  workspace: z.string().min(1).default("default"),
+  proxyPort: z.number().int().positive().default(8080),
+  services: z.array(serviceSchema).default([]),
+  projects: z.array(proxyProjectSchema).default([])
+});
+
 export type HealthCheck = z.infer<typeof healthCheckSchema>;
 export type ServiceConfig = z.infer<typeof serviceSchema>;
 export type ProjectConfig = z.infer<typeof projectSchema>;
 export type KibanConfig = z.infer<typeof kibanConfigSchema>;
+export type ProxyProjectConfig = z.infer<typeof proxyProjectSchema>;
+export type ProxyConfig = z.infer<typeof proxyConfigSchema>;
 
 export type RuntimeStatus = "running" | "stopped" | "stale" | "unknown";
 

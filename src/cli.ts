@@ -1,12 +1,26 @@
 #!/usr/bin/env node
 import fs from "fs-extra";
+import { spawn } from "node:child_process";
 import { Command } from "commander";
 import open from "open";
 import { execa } from "execa";
-import { findProject, loadConfig, saveConfig, writeInitialConfig } from "./config.js";
+import {
+  findConfig,
+  findProject,
+  findProxyConfig,
+  findProxyProject,
+  findProxyService,
+  loadConfig,
+  loadProxyConfig,
+  saveConfig,
+  writeInitialProxyConfig
+} from "./config.js";
+import { containerName, downService, isDockerRunning, serviceRunning, upService } from "./docker.js";
 import { runDoctor } from "./doctor.js";
+import { waitForHealth } from "./health.js";
 import { projectLogPath } from "./paths.js";
 import { getPortUsage, listListeningPorts } from "./ports.js";
+import { proxyUrl, startProxy, targetPort } from "./proxy.js";
 import { getProjectStatus } from "./runtime.js";
 import { startProject, stopProject } from "./runtime.js";
 import { printJson, error as printError, ok, warn } from "./output.js";
@@ -21,9 +35,9 @@ program
 
 program
   .command("init")
-  .description("Create kiban.yml in the current directory.")
+  .description("Create kiban.config.json in the current directory.")
   .action(async () => {
-    const configPath = await writeInitialConfig();
+    const configPath = await writeInitialProxyConfig();
     ok(`Created ${configPath}`);
   });
 
@@ -66,6 +80,27 @@ program
   .option("--json", "Print JSON.")
   .description("List registered projects.")
   .action(async (options) => {
+    if (await findProxyConfig()) {
+      const { config } = await loadProxyConfig();
+      const rows = config.projects.map((project) => ({
+        name: project.name,
+        host: proxyUrl(config, project.host),
+        target: project.target,
+        command: project.command,
+        cwd: project.cwd,
+        services: project.services ?? []
+      }));
+      if (options.json) return printJson({ workspace: config.workspace, proxyPort: config.proxyPort, services: config.services, projects: rows });
+      for (const row of rows) {
+        console.log(`${row.name}`);
+        console.log(`  host: ${row.host}`);
+        console.log(`  target: ${row.target}`);
+        console.log(`  command: ${row.command}`);
+        if (row.services.length > 0) console.log(`  services: ${row.services.join(", ")}`);
+      }
+      return;
+    }
+
     const { config } = await loadConfig();
     const rows = await Promise.all(
       config.projects.map(async (project) => ({
@@ -81,18 +116,136 @@ program
   });
 
 program
+  .command("dev")
+  .description("Run all commands from kiban.config.json and stream their output.")
+  .action(async () => {
+    const { config } = await loadProxyConfig();
+    if (config.projects.length === 0) throw new Error("No projects configured in kiban.config.json.");
+
+    await startProjectServices(config);
+
+    for (const project of config.projects) {
+      const port = targetPort(project.target);
+      if (port) await assertPortAvailableForDev(port, project.name);
+    }
+
+    const children = config.projects.map((project) => {
+      ok(`Starting ${project.name}: ${project.command}`);
+      const child = spawn(project.command, {
+        cwd: project.cwd,
+        shell: true,
+        env: process.env
+      });
+
+      child.stdout?.on("data", (chunk: Buffer) => {
+        process.stdout.write(prefixLines(project.name, chunk));
+      });
+      child.stderr?.on("data", (chunk: Buffer) => {
+        process.stderr.write(prefixLines(project.name, chunk));
+      });
+      child.on("exit", (code, signal) => {
+        warn(`${project.name} exited${code === null ? "" : ` with code ${code}`}${signal ? ` (${signal})` : ""}`);
+      });
+      return child;
+    });
+
+    const stopChildren = () => {
+      for (const child of children) {
+        if (!child.killed) child.kill("SIGTERM");
+      }
+    };
+    process.once("SIGINT", () => {
+      stopChildren();
+      process.exit(130);
+    });
+    process.once("SIGTERM", () => {
+      stopChildren();
+      process.exit(143);
+    });
+
+    await new Promise<void>((resolve) => {
+      let exited = 0;
+      for (const child of children) {
+        child.on("exit", () => {
+          exited += 1;
+          if (exited === children.length) resolve();
+        });
+      }
+    });
+  });
+
+const servicesCommand = program
+  .command("services")
+  .description("Manage Docker services from kiban.config.json.");
+
+servicesCommand
+  .command("up")
+  .argument("[services...]")
+  .description("Start Docker services from kiban.config.json.")
+  .action(async (names: string[]) => {
+    const { config } = await loadProxyConfig();
+    const targets = names.length > 0 ? names : config.services.map((service) => service.name);
+    if (targets.length === 0) throw new Error("No services configured in kiban.config.json.");
+    await startNamedServices(config, targets);
+  });
+
+servicesCommand
+  .command("down")
+  .argument("[services...]")
+  .description("Stop Docker services from kiban.config.json.")
+  .action(async (names: string[]) => {
+    const { config } = await loadProxyConfig();
+    const targets = names.length > 0 ? names : config.services.map((service) => service.name);
+    if (targets.length === 0) throw new Error("No services configured in kiban.config.json.");
+    for (const name of targets) {
+      const service = findProxyService(config, name);
+      await downService(config, service);
+      ok(`Stopped service ${service.name}`);
+    }
+  });
+
+servicesCommand
+  .command("status")
+  .option("--json", "Print JSON.")
+  .description("Show Docker service status from kiban.config.json.")
+  .action(async (options) => {
+    const { config } = await loadProxyConfig();
+    const rows = await Promise.all(
+      config.services.map(async (service) => ({
+        name: service.name,
+        image: service.image,
+        container: containerName(config, service),
+        running: await serviceRunning(config, service),
+        ports: service.ports ?? []
+      }))
+    );
+    if (options.json) return printJson({ services: rows });
+    for (const row of rows) {
+      console.log(`${row.name}\t${row.running ? "running" : "stopped"}\t${row.container}\t${row.ports.join(",")}`);
+    }
+  });
+
+program
   .command("up")
   .argument("[projects...]")
   .option("--all", "Start all projects.")
+  .option("-d, --detach", "Start projects in the background without following logs.")
+  .option("--follow", "Follow project logs after starting. This is the default unless --detach is used.")
   .description("Start projects and their dependent services.")
   .action(async (names: string[], options) => {
     const { config } = await loadConfig();
     const targets = options.all ? config.projects : names.map((name) => findProject(config, name));
     if (targets.length === 0) throw new Error("Specify a project name or --all.");
+    const logFiles: string[] = [];
+    const logOffsets = new Map<string, number>();
     for (const project of targets) {
+      const logFile = project.logFile ?? projectLogPath(project.name);
+      logOffsets.set(logFile, await fileSize(logFile));
       const result = await startProject(config, project);
       ok(`${project.name} ${result.alreadyRunning ? "already running" : "started"}${result.pid ? ` (pid ${result.pid})` : ""}`);
+      logFiles.push(result.logFile ?? logFile);
     }
+    if (!options.detach || options.follow) await followLogs(logFiles, logOffsets);
   });
 
 program
@@ -186,14 +339,35 @@ program
   .option("--json", "Print JSON.")
   .description("List local listening ports and match registered projects.")
   .action(async (options) => {
-    const { config } = await loadConfig();
+    const proxyConfig = (await findProxyConfig()) ? (await loadProxyConfig()).config : null;
+    const ymlConfig = !proxyConfig && (await findConfig()) ? (await loadConfig()).config : null;
     const usages = await listListeningPorts();
     const rows = usages.map((usage) => ({
       ...usage,
-      registeredProject: config.projects.find((project) => project.port === usage.port)?.name
+      registeredProject:
+        proxyConfig?.projects.find((project) => targetPort(project.target) === usage.port)?.name ??
+        ymlConfig?.projects.find((project) => project.port === usage.port)?.name
     }));
     if (options.json) return printJson({ ports: rows });
     for (const row of rows) console.log(`${row.port}\t${row.command ?? "-"}\t${row.pid ?? "-"}\t${row.registeredProject ?? "-"}`);
+  });
+
+program
+  .command("proxy")
+  .description("Start the local HTTP reverse proxy from kiban.config.json.")
+  .action(async () => {
+    const { config } = await loadProxyConfig();
+    const server = await startProxy(config);
+    ok(`Proxy listening on http://localhost:${config.proxyPort}`);
+    for (const project of config.projects) {
+      console.log(`${proxyUrl(config, project.host)} -> ${project.target}`);
+    }
+
+    const close = () => {
+      server.close(() => process.exit(0));
+    };
+    process.once("SIGINT", close);
+    process.once("SIGTERM", close);
   });
 
 program
@@ -215,6 +389,15 @@ program
   .argument("<project>")
   .description("Open a project URL in the browser.")
   .action(async (name) => {
+    if (await findProxyConfig()) {
+      const { config } = await loadProxyConfig();
+      const project = findProxyProject(config, name);
+      const url = proxyUrl(config, project.host);
+      await open(url);
+      ok(`Opened ${url}`);
+      return;
+    }
+
     const { config } = await loadConfig();
     const project = findProject(config, name);
     if (!project.url) throw new Error(`${name} has no url configured.`);
@@ -236,15 +419,23 @@ program
   .command("start")
   .argument("[projects...]")
   .option("--all", "Start all projects.")
+  .option("-d, --detach", "Start projects in the background without following logs.")
+  .option("--follow", "Follow project logs after starting. This is the default unless --detach is used.")
   .description("Alias for up.")
   .action(async (names: string[], options) => {
     const { config } = await loadConfig();
     const targets = options.all ? config.projects : names.map((name) => findProject(config, name));
     if (targets.length === 0) throw new Error("Specify a project name or --all.");
+    const logFiles: string[] = [];
+    const logOffsets = new Map<string, number>();
     for (const project of targets) {
+      const logFile = project.logFile ?? projectLogPath(project.name);
+      logOffsets.set(logFile, await fileSize(logFile));
       const result = await startProject(config, project);
       ok(`${project.name} ${result.alreadyRunning ? "already running" : "started"}${result.pid ? ` (pid ${result.pid})` : ""}`);
+      logFiles.push(result.logFile ?? logFile);
     }
+    if (!options.detach || options.follow) await followLogs(logFiles, logOffsets);
   });
 
 program
@@ -262,5 +453,79 @@ program
 
 program.parseAsync().catch((err: Error & { code?: number }) => {
   printError(err.message);
-  process.exit(err.code ?? 1);
+  process.exit(typeof err.code === "number" ? err.code : 1);
 });
+
+async function fileSize(filePath: string) {
+  try {
+    return (await fs.stat(filePath)).size;
+  } catch {
+    return 0;
+  }
+}
+
+async function followLogs(logFiles: string[], offsets: Map<string, number>) {
+  if (logFiles.length === 1) {
+    const [logFile] = logFiles;
+    const offset = (offsets.get(logFile) ?? 0) + 1;
+    await execa("tail", ["-c", `+${offset}`, "-f", logFile], { stdio: "inherit" });
+    return;
+  }
+
+  await execa("tail", ["-n", "0", "-f", ...logFiles], { stdio: "inherit" });
+}
+
+function prefixLines(projectName: string, chunk: Buffer) {
+  return chunk
+    .toString()
+    .split(/\r?\n/)
+    .map((line, index, lines) => (index === lines.length - 1 && line === "" ? "" : `[${projectName}] ${line}`))
+    .join("\n");
+}
+
+async function startProjectServices(config: Awaited<ReturnType<typeof loadProxyConfig>>["config"]) {
+  const serviceNames = [...new Set(config.projects.flatMap((project) => project.services ?? []))];
+  if (serviceNames.length === 0) return;
+  await startNamedServices(config, serviceNames);
+}
+
+async function startNamedServices(config: Awaited<ReturnType<typeof loadProxyConfig>>["config"], serviceNames: string[]) {
+  if (!(await isDockerRunning())) {
+    const error = new Error("Docker is not running. Start Docker Desktop or OrbStack before running projects with services.") as Error & { code: number };
+    error.code = 4;
+    throw error;
+  }
+
+  const started = new Set<string>();
+  const startOne = async (name: string) => {
+    if (started.has(name)) return;
+    const service = findProxyService(config, name);
+    for (const dependency of service.dependsOn ?? []) {
+      await startOne(dependency);
+    }
+    ok(`Starting service ${service.name}: ${service.image}`);
+    await upService(config, service);
+    const healthy = await waitForHealth(service.healthCheck);
+    if (!healthy) {
+      const error = new Error(`Service health check failed: ${service.name}`) as Error & { code: number };
+      error.code = 5;
+      throw error;
+    }
+    started.add(name);
+  };
+
+  for (const name of serviceNames) {
+    await startOne(name);
+  }
+}
+
+async function assertPortAvailableForDev(port: number, projectName: string) {
+  const usage = await getPortUsage(port);
+  if (!usage?.pid) return;
+  const error = new Error(
+    `${projectName}: target port ${port} is already in use by ${usage.command ?? "unknown"} pid ${usage.pid}. ` +
+      `Stop it or run \`kiban kill-port ${port} --force\`.`
+  ) as Error & { code: number };
+  error.code = 3;
+  throw error;
+}

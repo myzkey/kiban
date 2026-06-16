@@ -1,0 +1,12 @@
+{
+  "proxyPort": 8080,
+  "projects": [
+    {
+      "name": "web",
+      "host": "web.localhost",
+      "target": "http://localhost:43110",
+      "command": "node server.mjs",
+      "cwd": "."
+    }
+  ]
+}

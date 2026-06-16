@@ -1,0 +1,42 @@
+{
+  "workspace": "next-postgres",
+  "proxyPort": 8080,
+  "services": [
+    {
+      "name": "postgres",
+      "image": "postgres:16",
+      "ports": ["5432:5432"],
+      "env": {
+        "POSTGRES_PASSWORD": "postgres",
+        "POSTGRES_DB": "app"
+      },
+      "healthCheck": {
+        "type": "tcp",
+        "host": "127.0.0.1",
+        "port": 5432,
+        "timeoutMs": 30000
+      }
+    },
+    {
+      "name": "redis",
+      "image": "redis:7",
+      "ports": ["6379:6379"],
+      "healthCheck": {
+        "type": "tcp",
+        "host": "127.0.0.1",
+        "port": 6379,
+        "timeoutMs": 30000
+      }
+    }
+  ],
+  "projects": [
+    {
+      "name": "web",
+      "host": "web.localhost",
+      "target": "http://localhost:3000",
+      "command": "pnpm dev",
+      "cwd": ".",
+      "services": ["postgres", "redis"]
+    }
+  ]
+}

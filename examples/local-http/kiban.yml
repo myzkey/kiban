@@ -1,0 +1,11 @@
+workspace: local-http-smoke
+projects:
+  - name: web
+    path: .
+    command: node server.mjs
+    port: 43110
+    url: http://localhost:43110
+    healthCheck:
+      type: http
+      url: http://localhost:43110
+services: []
