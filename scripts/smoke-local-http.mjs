@@ -40,22 +40,27 @@ try {
   const output = collectOutput(child);
   await waitForOutput(output, `listening on http://127.0.0.1:${proxyPort}`, child);
 
-  const response = await requestWithRetry({
+  const response = await smokeRequestWithRetry({
     hostname: "127.0.0.1",
     port: proxyPort,
     path: "/smoke",
     headers: { host: `web.localhost:${proxyPort}` }
   });
-  const body = JSON.parse(response.body);
-  if (response.statusCode < 200 || response.statusCode >= 300 || body.ok !== true || body.path !== "/smoke") {
-    throw new Error(`Unexpected smoke response: ${JSON.stringify(body)}`);
-  }
   const workspace = path.basename(workDir);
   const textLog = await fs.readFile(path.join(kibanHome, "logs", workspace, "web.log"), "utf8");
   const jsonlLog = await fs.readFile(path.join(kibanHome, "logs", workspace, "web.jsonl"), "utf8");
   if (!textLog.includes("local-http listening") || !jsonlLog.includes('"project":"web"')) {
     throw new Error("Project logs were not captured during smoke test.");
   }
+
+  await runCli(["restart", "web"], workDir, kibanHome);
+  await waitForOutput(output, "Restarting web...", child);
+  await smokeRequestWithRetry({
+    hostname: "127.0.0.1",
+    port: proxyPort,
+    path: "/restart-smoke",
+    headers: { host: `web.localhost:${proxyPort}` }
+  });
 
   console.log(`OK local-http smoke passed on proxy port ${proxyPort}`);
 } finally {
@@ -125,6 +130,23 @@ async function requestWithRetry(options) {
       lastError = error;
       await delay(100);
     }
+  }
+  throw lastError ?? new Error(`Timed out fetching ${options.hostname}:${options.port}${options.path}`);
+}
+
+async function smokeRequestWithRetry(options) {
+  const startedAt = Date.now();
+  let lastError;
+  while (Date.now() - startedAt < 10_000) {
+    try {
+      const response = await httpRequest(options);
+      const body = JSON.parse(response.body);
+      if (response.statusCode >= 200 && response.statusCode < 300 && body.ok === true && body.path === options.path) return response;
+      lastError = new Error(`Unexpected smoke response: ${JSON.stringify(body)}`);
+    } catch (error) {
+      lastError = error;
+    }
+    await delay(100);
   }
   throw lastError ?? new Error(`Timed out fetching ${options.hostname}:${options.port}${options.path}`);
 }

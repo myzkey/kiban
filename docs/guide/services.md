@@ -15,6 +15,7 @@ It reads service images, ports, environment, volumes, and `depends_on`. For comm
 
 ```sh
 kiban services up
+kiban services restart postgres
 kiban services status
 kiban services logs postgres --follow
 kiban services down

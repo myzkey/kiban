@@ -24,6 +24,15 @@ Start services, app commands, and the local proxy.
 kiban dev
 ```
 
+## `kiban restart`
+
+Ask the running `kiban dev` process to restart project commands.
+
+```sh
+kiban restart web
+kiban restart --all
+```
+
 ## `kiban list`
 
 Show configured projects and local URLs.
@@ -84,6 +93,7 @@ Manage Docker services for this workspace.
 
 ```sh
 kiban services up
+kiban services restart postgres
 kiban services status
 kiban services logs postgres --follow
 kiban services down

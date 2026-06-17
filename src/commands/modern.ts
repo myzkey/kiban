@@ -8,6 +8,7 @@ import { listListeningPorts } from "../ports.js";
 import { proxyUrl, startProxy, targetPort } from "../proxy.js";
 import { printJson, ok } from "../output.js";
 import { ensureProjectLogFiles, fileSize, followLogs, printLogTail, projectLogFiles } from "../process.js";
+import { ALL_PROJECTS_RESTART, requestProjectRestart } from "../restart.js";
 
 export function registerModernCommands(program: Command) {
   program
@@ -70,6 +71,24 @@ export function registerModernCommands(program: Command) {
     .action(async () => {
       const { config } = await loadProxyConfig();
       await runDev(config);
+    });
+
+  program
+    .command("restart")
+    .argument("[project]")
+    .option("--all", "Restart all configured projects.")
+    .description("Ask the running kiban dev process to restart project commands.")
+    .action(async (name: string | undefined, options) => {
+      const { config } = await loadProxyConfig();
+      if (!options.all && !name) throw new Error("Project name is required unless --all is used.");
+      if (options.all) {
+        await requestProjectRestart(config.workspace, ALL_PROJECTS_RESTART);
+        ok("Restart requested for all projects");
+        return;
+      }
+      findProxyProject(config, name ?? "");
+      await requestProjectRestart(config.workspace, name ?? "");
+      ok(`Restart requested for ${name}`);
     });
 
   registerServicesCommand(program);
@@ -171,6 +190,19 @@ function registerServicesCommand(program: Command) {
       if (targets.length === 0) throw new Error("No services configured in this Kiban workspace.");
       await stopServices(config, targets);
       for (const name of targets) ok(`Stopped service ${name}`);
+    });
+
+  servicesCommand
+    .command("restart")
+    .argument("[services...]")
+    .description("Restart configured Docker services.")
+    .action(async (names: string[]) => {
+      const { config } = await loadProxyConfig();
+      const targets = names.length > 0 ? names : config.services.map((service) => service.name);
+      if (targets.length === 0) throw new Error("No services configured in this Kiban workspace.");
+      await stopServices(config, targets);
+      await startServices(config, targets, { print: true });
+      for (const name of targets) ok(`Restarted service ${name}`);
     });
 
   servicesCommand

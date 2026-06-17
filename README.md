@@ -126,6 +126,12 @@ kiban logs web --follow
 Show project logs captured from `kiban dev`. Kiban stores per-project text logs and structured JSONL logs under `~/.kiban/logs/{workspace}`.
 
 ```sh
+kiban restart web
+```
+
+Restart a project process managed by the running `kiban dev`.
+
+```sh
 kiban open web
 ```
 
@@ -137,6 +143,7 @@ When a project lists services, Kiban starts those containers before running the 
 
 ```sh
 kiban services up
+kiban services restart postgres
 kiban services status
 kiban services logs postgres --follow
 kiban services down

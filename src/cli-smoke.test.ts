@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { registerModernCommands } from "./commands/modern.js";
 import { registerStackCommands } from "./commands/stack.js";
 import { writeInitialProxyConfig } from "./config.js";
+import { consumeRestartRequests } from "./restart.js";
 
 describe("cli smoke", () => {
   const originalCwd = process.cwd();
@@ -54,6 +55,16 @@ describe("cli smoke", () => {
     });
   });
 
+  it("requests a project restart", async () => {
+    const cwd = await fixtureDir();
+    process.chdir(cwd);
+
+    const output = await runModernCommand(["restart", "web"]);
+
+    expect(output).toContain("Restart requested for web");
+    await expect(consumeRestartRequests("smoke")).resolves.toEqual(["web"]);
+  });
+
   it("prints inferred init config without writing when using init --detect", async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "kiban-detect-"));
     process.env.KIBAN_HOME = await fs.mkdtemp(path.join(os.tmpdir(), "kiban-home-"));
@@ -89,6 +100,7 @@ describe("cli smoke", () => {
     const help = program.helpInformation();
 
     expect(help).toContain("dev");
+    expect(help).toContain("restart");
     expect(help).toContain("logs");
     expect(help).toContain("doctor");
     expect(help).not.toContain("legacy");
@@ -99,8 +111,8 @@ describe("cli smoke", () => {
 
 async function runModernCommand(args: string[]) {
   const lines: string[] = [];
-  vi.spyOn(console, "log").mockImplementation((message?: unknown) => {
-    lines.push(String(message ?? ""));
+  vi.spyOn(console, "log").mockImplementation((...messages: unknown[]) => {
+    lines.push(messages.map((message) => String(message ?? "")).join(" "));
   });
   const program = new Command();
   program.exitOverride();

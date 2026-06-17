@@ -31,6 +31,15 @@ kiban logs --all --tail 200
 kiban logs web --jsonl
 ```
 
+Restart a project without stopping the proxy:
+
+```sh
+kiban restart web
+kiban restart --all
+```
+
+`kiban restart` asks the running `kiban dev` process to restart the project, so logs and proxy routing remain under the same dev session.
+
 ## Stopping
 
 Press `Ctrl+C` to stop the project processes and the proxy started by Kiban.

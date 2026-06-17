@@ -37,6 +37,14 @@ export function projectPidPath(name: string) {
   return path.join(pidDir(), `${name}.pid`);
 }
 
+export function restartRequestDir(workspace: string) {
+  return path.join(stateDir(), "restart", safePathPart(workspace));
+}
+
+export function restartRequestPath(workspace: string, projectName: string) {
+  return path.join(restartRequestDir(workspace), `${safePathPart(projectName)}.json`);
+}
+
 export function kibanDir() {
   const configuredKibanHome = process.env.KIBAN_HOME;
   return configuredKibanHome ? path.resolve(expandHome(configuredKibanHome)) : path.join(os.homedir(), ".kiban");

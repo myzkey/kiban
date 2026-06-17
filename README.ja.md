@@ -126,6 +126,12 @@ kiban logs web --follow
 `kiban dev` が取得した project log を表示します。project ごとの text log と structured JSONL log は `~/.kiban/logs/{workspace}` に保存されます。
 
 ```sh
+kiban restart web
+```
+
+起動中の `kiban dev` が管理している project process を再起動します。
+
+```sh
 kiban open web
 ```
 
@@ -137,6 +143,7 @@ project に `services` を指定すると、Kiban はアプリ起動前に Docke
 
 ```sh
 kiban services up
+kiban services restart postgres
 kiban services status
 kiban services logs postgres --follow
 kiban services down

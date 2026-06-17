@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const assertProxyPortUsable = vi.fn();
@@ -6,8 +7,9 @@ const startOrReuseProxy = vi.fn();
 const startProjectServices = vi.fn();
 const getPortUsage = vi.fn();
 const spawnStreamingProject = vi.fn();
+const stopProcess = vi.fn();
 const stopProcesses = vi.fn();
-const waitForProcesses = vi.fn();
+const consumeRestartRequests = vi.fn();
 
 vi.mock("./proxy-runtime.js", () => ({
   assertProxyPortUsable,
@@ -25,8 +27,13 @@ vi.mock("./ports.js", () => ({
 
 vi.mock("./process.js", () => ({
   spawnStreamingProject,
-  stopProcesses,
-  waitForProcesses
+  stopProcess,
+  stopProcesses
+}));
+
+vi.mock("./restart.js", () => ({
+  ALL_PROJECTS_RESTART: "__all__",
+  consumeRestartRequests
 }));
 
 describe("dev", () => {
@@ -36,9 +43,10 @@ describe("dev", () => {
     startOrReuseProxy.mockReset().mockResolvedValue({ reused: false, server: {} });
     startProjectServices.mockReset().mockResolvedValue(undefined);
     getPortUsage.mockReset().mockResolvedValue(null);
-    spawnStreamingProject.mockReset().mockReturnValue({ pid: 1 });
+    spawnStreamingProject.mockReset().mockImplementation(() => childProcess());
+    stopProcess.mockReset();
     stopProcesses.mockReset();
-    waitForProcesses.mockReset().mockResolvedValue(undefined);
+    consumeRestartRequests.mockReset().mockResolvedValue([]);
   });
 
   it("starts services, projects, and proxy in order", async () => {
@@ -46,7 +54,7 @@ describe("dev", () => {
     startProjectServices.mockImplementation(async () => calls.push("services"));
     spawnStreamingProject.mockImplementation(() => {
       calls.push("project");
-      return { pid: 1 };
+      return childProcess();
     });
     startOrReuseProxy.mockImplementation(async () => {
       calls.push("proxy");
@@ -75,6 +83,17 @@ describe("dev", () => {
     await expect(runDev({ ...config(), projects: [] })).rejects.toThrow("No projects configured");
   });
 });
+
+function childProcess() {
+  const child = new EventEmitter() as EventEmitter & { pid: number; exitCode: number | null };
+  child.pid = 1;
+  child.exitCode = null;
+  setTimeout(() => {
+    child.exitCode = 0;
+    child.emit("exit", 0);
+  }, 0);
+  return child;
+}
 
 function config() {
   return {
