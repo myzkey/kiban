@@ -8,5 +8,10 @@
     "type": "file",
     "name": "config-schema",
     "label": "Config Schema"
+  },
+  {
+    "type": "file",
+    "name": "release",
+    "label": "Release"
   }
 ]

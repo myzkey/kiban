@@ -217,6 +217,14 @@ pnpm build
 pnpm link --global
 ```
 
+## リリース
+
+Kiban は Changesets と GitHub Actions で npm release を管理します。リリース対象の変更では changeset を追加します。
+
+```sh
+pnpm changeset
+```
+
 ## セキュリティ
 
 Kiban は workspace config に書かれたコマンドを実行します。信頼できるワークスペースだけを初期化してください。

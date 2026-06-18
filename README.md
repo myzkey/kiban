@@ -217,6 +217,14 @@ pnpm build
 pnpm link --global
 ```
 
+## Release
+
+Kiban uses Changesets and GitHub Actions for npm releases. Add a changeset for releasable changes:
+
+```sh
+pnpm changeset
+```
+
 ## Security
 
 Kiban runs commands from its workspace config. Only initialize workspaces that you trust.
