@@ -13,7 +13,7 @@
     "url": "https://github.com/myzkey/kibaco/issues"
   },
   "bin": {
-    "kibaco": "./dist/cli.js"
+    "kibaco": "dist/cli.js"
   },
   "files": [
     "dist",
