@@ -410,7 +410,7 @@ function normalizeComposePortObject(port: Record<string, unknown>) {
 }
 
 function inferComposeHealthCheck(name: string, image: string, value: unknown, ports: unknown) {
-  const test = isRecord(value) ? (Array.isArray(value.test) ? value.test.map(String).join(" ") : typeof value.test === "string" ? value.test : undefined) : undefined;
+  const test = isRecord(value) ? normalizeComposeHealthCheckTest(value.test) : undefined;
   if (test) return { type: "command" as const, command: test };
   const imageName = `${name} ${image}`.toLowerCase();
   const inferredPort = firstPublishedPort(ports);
@@ -422,6 +422,18 @@ function inferComposeHealthCheck(name: string, image: string, value: unknown, po
     return { type: "http" as const, url: `http://127.0.0.1:${port}` };
   }
   return undefined;
+}
+
+function normalizeComposeHealthCheckTest(value: unknown) {
+  if (Array.isArray(value)) {
+    const parts = value.map(String);
+    const [kind, ...command] = parts;
+    if (kind === "NONE") return undefined;
+    if (kind === "CMD" || kind === "CMD-SHELL") return command.join(" ");
+    return parts.join(" ");
+  }
+  if (typeof value !== "string") return undefined;
+  return value.replace(/^(CMD|CMD-SHELL)\s+/, "");
 }
 
 function firstPublishedPort(ports: unknown) {

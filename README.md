@@ -97,9 +97,11 @@ http://api.localhost:8080
 
 ```sh
 kibaco dev
+kibaco dev web
+kibaco dev --select
 ```
 
-Start services, project commands, and the proxy together.
+Start services, project commands, and the proxy together. With no project names, Kibaco starts all configured projects and their referenced services.
 
 ```sh
 kibaco doctor
@@ -120,10 +122,12 @@ kibaco ports
 Show local listening ports and match them to configured projects when possible.
 
 ```sh
+kibaco logs
 kibaco logs web --follow
+kibaco logs mysql
 ```
 
-Show project logs captured from `kibaco dev`. Kibaco stores per-project text logs and structured JSONL logs under `~/.kibaco/logs/{workspace}`.
+Show project logs captured from `kibaco dev`, or Docker service logs when the name matches a configured service. Run `kibaco logs` without a name to choose from configured projects and services. Kibaco stores per-project text logs and structured JSONL logs under `~/.kibaco/logs/{workspace}`.
 
 ```sh
 kibaco restart web
@@ -145,7 +149,7 @@ When a project lists services, Kibaco starts those containers before running the
 kibaco services up
 kibaco services restart postgres
 kibaco services status
-kibaco services logs postgres --follow
+kibaco services logs postgres --tail 200 --follow
 kibaco services down
 ```
 

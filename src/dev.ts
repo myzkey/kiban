@@ -9,15 +9,24 @@ import { projectLogPath } from "./paths.js";
 import { ALL_PROJECTS_RESTART, consumeRestartRequests } from "./restart.js";
 import type { ProxyConfig } from "./types.js";
 
-export async function runDev(config: ProxyConfig) {
+export async function runDev(config: ProxyConfig, options: { projects?: string[] } = {}) {
   if (config.projects.length === 0) throw new Error("No projects configured in this Kibaco workspace.");
+  const activeProjects =
+    options.projects && options.projects.length > 0
+      ? options.projects.map((name) => {
+          const project = config.projects.find((item) => item.name === name);
+          if (!project) throw kibacoError(`Project not found: ${name}`, 6);
+          return project;
+        })
+      : config.projects;
+  const activeConfig = { ...config, projects: activeProjects };
 
   console.log("Kibaco dev starting...");
   console.log("");
 
   await assertProxyPortUsable(config.proxyPort);
-  await startProjectServices(config, { print: true });
-  await assertProjectTargetPortsAvailable(config);
+  await startProjectServices(activeConfig, { print: true });
+  await assertProjectTargetPortsAvailable(activeConfig);
 
   console.log("");
   console.log("Projects:");
@@ -30,7 +39,7 @@ export async function runDev(config: ProxyConfig) {
   });
 
   const startProject = (projectName: string) => {
-    const project = config.projects.find((item) => item.name === projectName);
+    const project = activeProjects.find((item) => item.name === projectName);
     if (!project) return;
     console.log(`  ${project.name.padEnd(14)} ${project.command}`);
     console.log(`  ${"".padEnd(14)} logs: ${projectLogPath(config.workspace, project.name)}`);
@@ -43,9 +52,9 @@ export async function runDev(config: ProxyConfig) {
     });
   };
 
-  for (const project of config.projects) startProject(project.name);
+  for (const project of activeProjects) startProject(project.name);
 
-  const proxyHandle = await startOrReuseProxy(config);
+  const proxyHandle = await startOrReuseProxy(activeConfig);
   const restartTimer = setInterval(() => {
     void handleRestartRequests();
   }, 500);
@@ -53,9 +62,9 @@ export async function runDev(config: ProxyConfig) {
   async function handleRestartRequests() {
     const requests = await consumeRestartRequests(config.workspace);
     if (requests.length === 0 || shuttingDown) return;
-    const requestedNames = requests.includes(ALL_PROJECTS_RESTART) ? config.projects.map((project) => project.name) : requests;
+    const requestedNames = requests.includes(ALL_PROJECTS_RESTART) ? activeProjects.map((project) => project.name) : requests;
     for (const projectName of [...new Set(requestedNames)]) {
-      if (!config.projects.some((project) => project.name === projectName)) continue;
+      if (!activeProjects.some((project) => project.name === projectName)) continue;
       await restartProject(projectName);
     }
   }
@@ -81,13 +90,13 @@ export async function runDev(config: ProxyConfig) {
     console.log("Stopping Kibaco dev...");
     console.log("");
     console.log("Projects:");
-    for (const project of config.projects) console.log(`  ${project.name.padEnd(14)} stopping`);
+    for (const project of activeProjects) console.log(`  ${project.name.padEnd(14)} stopping`);
     stopProcesses([...children.values()]);
     console.log("");
     console.log("Proxy:");
     await closeProxyHandle(proxyHandle);
     console.log(`  ${proxyHandle.reused ? "left running (reused existing proxy)" : "stopped"}`);
-    if (config.projects.some((project) => (project.services ?? []).length > 0)) {
+    if (activeProjects.some((project) => (project.services ?? []).length > 0)) {
       console.log("");
       console.log("Docker services:");
       console.log("  left running (use `kibaco services down` to stop them)");

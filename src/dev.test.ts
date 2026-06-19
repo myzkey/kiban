@@ -78,6 +78,38 @@ describe("dev", () => {
     expect(startOrReuseProxy).not.toHaveBeenCalled();
   });
 
+  it("starts only selected projects", async () => {
+    const { runDev } = await import("./dev.js");
+
+    await runDev(
+      {
+        ...config(),
+        projects: [
+          config().projects[0],
+          {
+            name: "api",
+            host: "api.localhost",
+            target: "http://localhost:3001",
+            command: "pnpm dev:api",
+            cwd: ".",
+            services: ["postgres"]
+          }
+        ]
+      },
+      { projects: ["api"] }
+    );
+
+    expect(startProjectServices).toHaveBeenCalledWith(expect.objectContaining({ projects: [expect.objectContaining({ name: "api" })] }), { print: true });
+    expect(spawnStreamingProject).toHaveBeenCalledTimes(1);
+    expect(spawnStreamingProject).toHaveBeenCalledWith(expect.objectContaining({ name: "api" }), expect.anything());
+    expect(startOrReuseProxy).toHaveBeenCalledWith(expect.objectContaining({ projects: [expect.objectContaining({ name: "api" })] }));
+  });
+
+  it("rejects unknown selected projects", async () => {
+    const { runDev } = await import("./dev.js");
+    await expect(runDev(config(), { projects: ["missing"] })).rejects.toMatchObject({ code: 6 });
+  });
+
   it("rejects empty project config", async () => {
     const { runDev } = await import("./dev.js");
     await expect(runDev({ ...config(), projects: [] })).rejects.toThrow("No projects configured");

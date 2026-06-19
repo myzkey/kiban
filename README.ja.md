@@ -97,9 +97,11 @@ http://api.localhost:8080
 
 ```sh
 kibaco dev
+kibaco dev web
+kibaco dev --select
 ```
 
-services、project commands、proxy をまとめて起動します。
+services、project commands、proxy をまとめて起動します。project 名を指定しない場合は、設定済み project 全部と、それらが参照する services を起動します。
 
 ```sh
 kibaco doctor
@@ -120,10 +122,12 @@ kibaco ports
 ローカルで listen しているポートを表示し、設定済み project と照合します。
 
 ```sh
+kibaco logs
 kibaco logs web --follow
+kibaco logs mysql
 ```
 
-`kibaco dev` が取得した project log を表示します。project ごとの text log と structured JSONL log は `~/.kibaco/logs/{workspace}` に保存されます。
+`kibaco dev` が取得した project log を表示します。指定名が configured service に一致する場合は Docker service log も表示できます。名前なしの `kibaco logs` では configured projects/services から選択できます。project ごとの text log と structured JSONL log は `~/.kibaco/logs/{workspace}` に保存されます。
 
 ```sh
 kibaco restart web
@@ -145,7 +149,7 @@ project に `services` を指定すると、Kibaco はアプリ起動前に Dock
 kibaco services up
 kibaco services restart postgres
 kibaco services status
-kibaco services logs postgres --follow
+kibaco services logs postgres --tail 200 --follow
 kibaco services down
 ```
 

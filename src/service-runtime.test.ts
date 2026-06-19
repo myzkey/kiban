@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const isDockerRunning = vi.fn();
 const upService = vi.fn();
 const downService = vi.fn();
+const execServiceCommand = vi.fn();
 const serviceRunning = vi.fn();
+const serviceLogTail = vi.fn();
 const serviceLogs = vi.fn();
 const containerName = vi.fn();
 const waitForHealth = vi.fn();
@@ -11,7 +13,9 @@ const waitForHealth = vi.fn();
 vi.mock("./docker.js", () => ({
   containerName,
   downService,
+  execServiceCommand,
   isDockerRunning,
+  serviceLogTail,
   serviceLogs,
   serviceRunning,
   upService
@@ -26,7 +30,9 @@ describe("service-runtime", () => {
     isDockerRunning.mockReset().mockResolvedValue(true);
     upService.mockReset().mockResolvedValue(undefined);
     downService.mockReset().mockResolvedValue(undefined);
+    execServiceCommand.mockReset().mockResolvedValue(undefined);
     serviceRunning.mockReset().mockResolvedValue(true);
+    serviceLogTail.mockReset().mockResolvedValue("database failed to initialize");
     serviceLogs.mockReset().mockResolvedValue(undefined);
     containerName.mockReset().mockImplementation((config, service) => `kibaco-${config.workspace}-${service.name}`);
     waitForHealth.mockReset().mockResolvedValue(true);
@@ -63,7 +69,10 @@ describe("service-runtime", () => {
     waitForHealth.mockResolvedValue(false);
     const { startServices } = await import("./service-runtime.js");
 
-    await expect(startServices(config(), ["postgres"])).rejects.toMatchObject({ code: 5 });
+    await expect(startServices(config(), ["postgres"])).rejects.toMatchObject({
+      code: 5,
+      message: expect.stringContaining("kibaco services logs postgres")
+    });
   });
 
   it("stops named services", async () => {

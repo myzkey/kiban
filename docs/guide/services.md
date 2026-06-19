@@ -17,7 +17,8 @@ It reads service images, ports, environment, volumes, and `depends_on`. For comm
 kibaco services up
 kibaco services restart postgres
 kibaco services status
-kibaco services logs postgres --follow
+kibaco logs postgres
+kibaco services logs postgres --tail 200 --follow
 kibaco services down
 ```
 

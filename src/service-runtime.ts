@@ -1,4 +1,4 @@
-import { containerName, downService, isDockerRunning, serviceLogs, serviceRunning, upService } from "./docker.js";
+import { containerName, downService, execServiceCommand, isDockerRunning, serviceLogTail, serviceLogs, serviceRunning, upService } from "./docker.js";
 import { waitForHealth } from "./health.js";
 import { kibacoError } from "./errors.js";
 import type { ServiceConfig } from "./types.js";
@@ -39,8 +39,17 @@ export async function startServices(config: ServiceStackConfig, serviceNames: st
     }
     if (options.print) console.log(`  ${service.name.padEnd(14)} starting...`);
     await upService(config, service);
-    const healthy = await waitForHealth(service.healthCheck);
-    if (!healthy) throw kibacoError(`Service health check failed: ${service.name}`, 5);
+    const healthy = await waitForHealth(service.healthCheck, undefined, {
+      runCommand: async (command) => {
+        try {
+          await execServiceCommand(config, service, command);
+          return true;
+        } catch {
+          return false;
+        }
+      }
+    });
+    if (!healthy) throw kibacoError(await serviceHealthErrorMessage(config, service), 5);
     if (options.print) console.log(`  ${service.name.padEnd(14)} healthy`);
     started.add(name);
   };
@@ -73,6 +82,29 @@ export async function getServiceStatuses(config: ServiceStackConfig): Promise<Se
   );
 }
 
-export async function showServiceLogs(config: ServiceStackConfig, serviceName: string, options: { follow?: boolean } = {}) {
+export async function showServiceLogs(config: ServiceStackConfig, serviceName: string, options: { follow?: boolean; tail?: number } = {}) {
   await serviceLogs(config, findStackService(config, serviceName), options);
+}
+
+async function serviceHealthErrorMessage(config: ServiceStackConfig, service: ServiceConfig) {
+  const name = containerName(config, service);
+  const lines = [
+    `Service health check failed: ${service.name}`,
+    `Container: ${name}`,
+    "",
+    "Inspect with:",
+    `  kibaco services logs ${service.name}`,
+    `  docker logs ${name}`
+  ];
+
+  if (service.healthCheck?.type === "command" && service.healthCheck.command) {
+    lines.push("", `Health check command: ${service.healthCheck.command}`);
+  }
+
+  const logs = await serviceLogTail(config, service, 80);
+  if (logs) {
+    lines.push("", "Recent Docker logs:", logs);
+  }
+
+  return lines.join("\n");
 }

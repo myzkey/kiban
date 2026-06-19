@@ -58,8 +58,22 @@ export async function downService(config: DockerStackConfig, service: ServiceCon
   }
 }
 
-export async function serviceLogs(config: DockerStackConfig, service: ServiceConfig, options: { follow?: boolean } = {}) {
+export async function execServiceCommand(config: DockerStackConfig, service: ServiceConfig, command: string) {
+  await execa("docker", ["exec", containerName(config, service), "sh", "-lc", command]);
+}
+
+export async function serviceLogTail(config: DockerStackConfig, service: ServiceConfig, lines = 80) {
+  try {
+    const { stdout, stderr } = await execa("docker", ["logs", "--tail", String(lines), containerName(config, service)]);
+    return [stdout, stderr].filter(Boolean).join("\n").trim();
+  } catch (error) {
+    return String((error as { stderr?: string; message?: string }).stderr ?? (error as Error).message).trim();
+  }
+}
+
+export async function serviceLogs(config: DockerStackConfig, service: ServiceConfig, options: { follow?: boolean; tail?: number } = {}) {
   const args = ["logs"];
+  if (options.tail) args.push("--tail", String(options.tail));
   if (options.follow) args.push("-f");
   args.push(containerName(config, service));
   await execa("docker", args, { stdio: "inherit" });

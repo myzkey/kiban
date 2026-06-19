@@ -229,7 +229,7 @@ describe("kibaco config", () => {
         dependsOn: [],
         healthCheck: expect.objectContaining({
           type: "command",
-          command: "CMD pg_isready -U postgres"
+          command: "pg_isready -U postgres"
         })
       }),
       expect.objectContaining({

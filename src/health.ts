@@ -4,20 +4,24 @@ import type { HealthCheck } from "./types.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export async function waitForHealth(check: HealthCheck | undefined, fallbackUrl?: string) {
+export async function waitForHealth(
+  check: HealthCheck | undefined,
+  fallbackUrl?: string,
+  options: { runCommand?: (command: string) => Promise<boolean> } = {}
+) {
   if (!check && !fallbackUrl) return true;
   const timeoutMs = check?.timeoutMs ?? 30_000;
   const started = Date.now();
 
   while (Date.now() - started < timeoutMs) {
-    if (await probeHealth(check, fallbackUrl)) return true;
+    if (await probeHealth(check, fallbackUrl, options)) return true;
     await sleep(500);
   }
 
   return false;
 }
 
-async function probeHealth(check: HealthCheck | undefined, fallbackUrl?: string) {
+async function probeHealth(check: HealthCheck | undefined, fallbackUrl?: string, options: { runCommand?: (command: string) => Promise<boolean> } = {}) {
   if (!check || check.type === "http") {
     const url = check?.url ?? fallbackUrl;
     if (!url) return true;
@@ -36,6 +40,7 @@ async function probeHealth(check: HealthCheck | undefined, fallbackUrl?: string)
 
   if (check.type === "command") {
     if (!check.command) return false;
+    if (options.runCommand) return options.runCommand(check.command);
     try {
       await execa(check.command, { shell: true });
       return true;

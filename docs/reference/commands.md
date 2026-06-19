@@ -22,7 +22,11 @@ Start services, app commands, and the local proxy.
 
 ```sh
 kibaco dev
+kibaco dev web api
+kibaco dev --select
 ```
+
+With no project names, `kibaco dev` starts all configured projects and the services referenced by those projects.
 
 ## `kibaco restart`
 
@@ -62,14 +66,20 @@ kibaco ports --json
 
 ## `kibaco logs`
 
-Show project logs captured by `kibaco dev`.
+Show project logs captured by `kibaco dev`, or Docker service logs for configured services.
 
 ```sh
+kibaco logs
 kibaco logs web
 kibaco logs web --follow
 kibaco logs --all --tail 200
 kibaco logs web --jsonl
+kibaco logs mysql
+kibaco logs mysql --service --tail 200
+kibaco logs --all-services
 ```
+
+When run in an interactive terminal without a target, `kibaco logs` lets you choose from configured projects and services.
 
 ## `kibaco proxy`
 
@@ -95,7 +105,7 @@ Manage Docker services for this workspace.
 kibaco services up
 kibaco services restart postgres
 kibaco services status
-kibaco services logs postgres --follow
+kibaco services logs postgres --tail 200 --follow
 kibaco services down
 ```
 

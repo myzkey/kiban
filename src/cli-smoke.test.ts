@@ -65,6 +65,20 @@ describe("cli smoke", () => {
     await expect(consumeRestartRequests("smoke")).resolves.toEqual(["web"]);
   });
 
+  it("requires an explicit logs target outside an interactive terminal", async () => {
+    const cwd = await fixtureDir();
+    process.chdir(cwd);
+
+    await expect(runModernCommand(["logs"])).rejects.toThrow("Project or service name is required");
+  });
+
+  it("requires an interactive terminal for dev --select", async () => {
+    const cwd = await fixtureDir();
+    process.chdir(cwd);
+
+    await expect(runModernCommand(["dev", "--select"])).rejects.toThrow("--select requires an interactive terminal");
+  });
+
   it("prints inferred init config without writing when using init --detect", async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "kibaco-detect-"));
     process.env.KIBACO_HOME = await fs.mkdtemp(path.join(os.tmpdir(), "kibaco-home-"));
