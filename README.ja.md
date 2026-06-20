@@ -26,6 +26,7 @@ kibaco init
 ```
 
 Kibaco は package manager、`package.json`、dev script、`.env` の port、よく使われる framework、backend/server file、monorepo の app folder、Compose file から設定をできるだけ推測します。
+proxy port は `8080` を優先しますが、project target やローカル process と衝突する場合は `kibaco init` が空いている proxy port を自動選択します。
 
 開発環境を起動します。
 
@@ -99,9 +100,11 @@ http://api.localhost:8080
 kibaco dev
 kibaco dev web
 kibaco dev --select
+kibaco dev --verbose
 ```
 
 services、project commands、proxy をまとめて起動します。project 名を指定しない場合は、設定済み project 全部と、それらが参照する services を起動します。
+project の stdout/stderr は log file に保存しますが、デフォルトではターミナルに流しません。インラインで project logs を見たい場合だけ `--verbose` を使います。
 
 ```sh
 kibaco doctor
@@ -114,6 +117,12 @@ kibaco list
 ```
 
 設定済み project と URL を表示します。
+
+```sh
+kibaco urls
+```
+
+設定済み local URL だけを表示します。
 
 ```sh
 kibaco ports
@@ -144,6 +153,7 @@ kibaco open web
 ## Docker Services
 
 project に `services` を指定すると、Kibaco はアプリ起動前に Docker コンテナを起動し、healthCheck があれば完了まで待ちます。
+Compose file から推測した services は `docker compose` で管理するため、`.env`、`env_file`、変数展開、networks、volumes は Docker Compose の挙動に従います。
 
 ```sh
 kibaco services up
@@ -225,6 +235,20 @@ node --version # v24 以上
 pnpm install
 pnpm build
 pnpm link --global
+```
+
+npm 公開版と、この checkout のローカルリンク版を切り替える場合:
+
+```sh
+pnpm switch:status
+pnpm switch:local
+pnpm switch:npm
+```
+
+公開版のバージョンを指定して戻す場合:
+
+```sh
+KIBACO_NPM_VERSION=0.0.1 pnpm switch:npm
 ```
 
 ## セキュリティ

@@ -13,6 +13,8 @@ Kibaco can start and stop Docker services defined in the workspace config.
 
 It reads service images, ports, environment, volumes, and `depends_on`. For common services such as PostgreSQL, MySQL, Redis, Meilisearch, Mailpit, and MailHog, Kibaco can also infer a simple health check when the Compose file does not define one.
 
+Services inferred from a Compose file are started and stopped through Docker Compose. This lets Compose resolve `.env`, `env_file`, variable substitution, networks, volumes, and other service details. Kibaco still starts application commands itself and routes them through its local proxy.
+
 ```sh
 kibaco services up
 kibaco services restart postgres

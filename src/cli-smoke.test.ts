@@ -38,6 +38,14 @@ describe("cli smoke", () => {
     );
   });
 
+  it("prints configured urls", async () => {
+    const cwd = await fixtureDir();
+    process.chdir(cwd);
+    const output = await runModernCommand(["urls"]);
+
+    expect(output).toContain("web\thttp://web.localhost:8080\t-> http://localhost:3000");
+  });
+
   it("prints services status --json", async () => {
     const cwd = await fixtureDir();
     process.chdir(cwd);
@@ -104,6 +112,15 @@ describe("cli smoke", () => {
         ]
       })
     );
+  });
+
+  it("can force refresh an existing config", async () => {
+    const cwd = await fixtureDir();
+    process.chdir(cwd);
+
+    const output = await runModernCommand(["init", "--force"]);
+
+    expect(output).toContain("Updated");
   });
 
   it("keeps old project-file commands out of the main help", () => {

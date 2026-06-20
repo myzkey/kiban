@@ -9,7 +9,7 @@ import { projectLogPath } from "./paths.js";
 import { ALL_PROJECTS_RESTART, consumeRestartRequests } from "./restart.js";
 import type { ProxyConfig } from "./types.js";
 
-export async function runDev(config: ProxyConfig, options: { projects?: string[] } = {}) {
+export async function runDev(config: ProxyConfig, options: { projects?: string[]; streamLogs?: boolean } = {}) {
   if (config.projects.length === 0) throw new Error("No projects configured in this Kibaco workspace.");
   const activeProjects =
     options.projects && options.projects.length > 0
@@ -43,7 +43,7 @@ export async function runDev(config: ProxyConfig, options: { projects?: string[]
     if (!project) return;
     console.log(`  ${project.name.padEnd(14)} ${project.command}`);
     console.log(`  ${"".padEnd(14)} logs: ${projectLogPath(config.workspace, project.name)}`);
-    const child = spawnStreamingProject(project, { workspace: config.workspace, log: config.log });
+    const child = spawnStreamingProject(project, { workspace: config.workspace, log: config.log, stream: options.streamLogs ?? false });
     children.set(project.name, child);
     child.once("exit", () => {
       if (restarting.has(project.name) || shuttingDown) return;

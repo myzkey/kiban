@@ -24,9 +24,11 @@ Start services, app commands, and the local proxy.
 kibaco dev
 kibaco dev web api
 kibaco dev --select
+kibaco dev --verbose
 ```
 
 With no project names, `kibaco dev` starts all configured projects and the services referenced by those projects.
+Project stdout/stderr is written to Kibaco log files but is not streamed to the terminal by default. Use `--verbose` to stream project logs inline.
 
 ## `kibaco restart`
 
@@ -44,6 +46,15 @@ Show configured projects and local URLs.
 ```sh
 kibaco list
 kibaco list --json
+```
+
+## `kibaco urls`
+
+Show configured local URLs.
+
+```sh
+kibaco urls
+kibaco urls --json
 ```
 
 ## `kibaco doctor`

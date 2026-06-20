@@ -23,6 +23,7 @@ export function registerModernCommands(program: Command) {
     .option("--cmd <command>")
     .option("--cwd <path>")
     .option("--detect", "Print the inferred config without writing it.")
+    .option("--force", "Overwrite the existing Kibaco config for this workspace.")
     .option("--interactive", "Review inferred values interactively before writing.")
     .description("Create a Kibaco config for this local workspace.")
     .action(async (options) => {
@@ -39,8 +40,8 @@ export function registerModernCommands(program: Command) {
         printJson(await buildInitialProxyConfig(answers, process.cwd(), { interactive: false }));
         return;
       }
-      const configPath = await writeInitialProxyConfig(undefined, answers, process.cwd(), { interactive: Boolean(options.interactive) });
-      ok(`Created ${configPath}`);
+      const configPath = await writeInitialProxyConfig(undefined, answers, process.cwd(), { interactive: Boolean(options.interactive), force: Boolean(options.force) });
+      ok(`${options.force ? "Updated" : "Created"} ${configPath}`);
     });
 
   program
@@ -68,14 +69,31 @@ export function registerModernCommands(program: Command) {
     });
 
   program
+    .command("urls")
+    .option("--json", "Print JSON.")
+    .description("Show configured local URLs.")
+    .action(async (options) => {
+      const { config } = await loadProxyConfig();
+      const rows = config.projects.map((project) => ({
+        name: project.name,
+        url: proxyUrl(config, project.host),
+        target: project.target
+      }));
+      if (options.json) return printJson({ urls: rows });
+      for (const row of rows) console.log(`${row.name}\t${row.url}\t-> ${row.target}`);
+    });
+
+  program
     .command("dev")
     .argument("[projects...]")
     .option("--select", "Choose projects to start interactively.")
+    .option("--verbose", "Stream project stdout/stderr to the terminal.")
+    .option("--quiet", "Keep project stdout/stderr out of the terminal. This is the default.")
     .description("Start services, app commands, and the local proxy.")
     .action(async (projects: string[], options) => {
       const { config } = await loadProxyConfig();
       const selectedProjects = options.select ? await promptDevProjects(config) : projects;
-      await runDev(config, { projects: selectedProjects });
+      await runDev(config, { projects: selectedProjects, streamLogs: Boolean(options.verbose) && !options.quiet });
     });
 
   program

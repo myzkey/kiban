@@ -5,6 +5,8 @@ import fs from "fs-extra";
 import YAML from "yaml";
 import { proxyConfigSchema, type ProxyConfig, type ProxyProjectConfig, type ServiceConfig } from "./types.js";
 import { ensureKibacoDirs, expandHome, workspaceIndexFile, workspacesDir } from "./paths.js";
+import { isPortAvailable } from "./ports.js";
+import { targetPort } from "./proxy.js";
 
 export class ConfigError extends Error {
   code = 2;
@@ -39,6 +41,13 @@ export async function loadProxyConfig(startDir = process.cwd()): Promise<{ path:
 export function normalizeProxyConfig(config: ProxyConfig, baseDir = process.cwd()): ProxyConfig {
   return {
     ...config,
+    services: attachComposeFiles(
+      config.services.map((service) => ({
+        ...service,
+        composeFile: service.composeFile ? path.resolve(baseDir, expandHome(service.composeFile)) : service.composeFile
+      })),
+      baseDir
+    ),
     projects: config.projects.map((project) => ({
       ...project,
       cwd: path.resolve(baseDir, expandHome(project.cwd))
@@ -58,6 +67,7 @@ export type InitialProxyConfigAnswers = {
 
 type BuildInitialProxyConfigOptions = {
   interactive?: boolean;
+  force?: boolean;
 };
 
 type PackageJson = {
@@ -79,10 +89,10 @@ type InferredProject = {
 export async function writeInitialProxyConfig(_targetPath?: string, answers: InitialProxyConfigAnswers = {}, rootDir = process.cwd(), options: BuildInitialProxyConfigOptions = {}) {
   const root = await resolveWorkspaceRoot(rootDir);
   const existing = await findProxyWorkspace(root);
-  if (existing?.root === root) throw new ConfigError(`Kibaco workspace already exists for ${root}.`);
+  if (existing?.root === root && !options.force) throw new ConfigError(`Kibaco workspace already exists for ${root}.`);
 
   const config = await buildInitialProxyConfig(answers, root, options);
-  const configPath = workspaceConfigPath(root, config.workspace);
+  const configPath = existing?.root === root ? existing.configPath : workspaceConfigPath(root, config.workspace);
   await fs.ensureDir(path.dirname(configPath));
   await fs.writeJson(configPath, config, { spaces: 2 });
   await registerProxyWorkspace({ root, configPath, workspace: config.workspace });
@@ -93,11 +103,13 @@ export async function buildInitialProxyConfig(answers: InitialProxyConfigAnswers
   const defaults = await inferInitialProxyConfigDefaults(rootDir);
   const inferredServices = await inferComposeServices(rootDir);
   const inferredProjects = await inferProjects(rootDir, inferredServices);
+  const providedAnswers = stripUndefinedAnswers(answers);
 
-  const shouldPrompt = options.interactive ?? (process.stdin.isTTY && process.stdout.isTTY && Object.keys(answers).length === 0);
-  const resolved = shouldPrompt ? await askInitialProxyConfig({ ...defaults, ...stripUndefinedAnswers(answers) }) : answers;
+  const shouldPrompt = options.interactive ?? (process.stdin.isTTY && process.stdout.isTTY && Object.keys(providedAnswers).length === 0);
+  const resolved = shouldPrompt ? await askInitialProxyConfig({ ...defaults, ...providedAnswers }) : providedAnswers;
+  const hasProjectOverride = ["projectName", "host", "target", "command", "cwd"].some((key) => key in providedAnswers);
   const projects =
-    Object.keys(answers).length === 0
+    !hasProjectOverride
       ? inferredProjects
       : [
           {
@@ -109,12 +121,30 @@ export async function buildInitialProxyConfig(answers: InitialProxyConfigAnswers
             services: inferredServices.map((service) => service.name)
           }
         ];
+  const proxyPort = await resolveProxyPort(resolved.proxyPort ?? defaults.proxyPort, {
+    explicit: resolved.proxyPort !== undefined,
+    projects
+  });
   return proxyConfigSchema.parse({
     workspace: resolved.workspace ?? defaults.workspace,
-    proxyPort: resolved.proxyPort ?? defaults.proxyPort,
+    proxyPort,
     services: inferredServices,
     projects
   });
+}
+
+async function resolveProxyPort(preferredPort: number, options: { explicit: boolean; projects: InferredProject[] }) {
+  if (options.explicit) return preferredPort;
+  const targetPorts = new Set(options.projects.map((project) => targetPort(project.target)).filter((port): port is number => Boolean(port)));
+  for (const port of candidateProxyPorts(preferredPort)) {
+    if (targetPorts.has(port)) continue;
+    if (await isPortAvailable(port, "127.0.0.1")) return port;
+  }
+  return preferredPort;
+}
+
+function candidateProxyPorts(preferredPort: number) {
+  return [preferredPort, ...Array.from({ length: 100 }, (_, index) => 18080 + index)];
 }
 
 function stripUndefinedAnswers(answers: InitialProxyConfigAnswers): Partial<Required<InitialProxyConfigAnswers>> {
@@ -177,18 +207,26 @@ function inferProjectNameFallback(projectRoot: string) {
 
 async function findProjectRoots(root: string) {
   if (!(await isMonorepoRoot(root))) return [root];
-  const patterns = ["apps", "packages", "services"];
+  const appRoots = await findProjectRootsUnder(root, "apps");
+  if (appRoots.length > 0) return appRoots.sort();
+  const patterns = ["packages", "services"];
   const roots: string[] = [];
   for (const directory of patterns) {
-    const parent = path.join(root, directory);
-    if (!(await fs.pathExists(parent))) continue;
-    for (const entry of await fs.readdir(parent, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue;
-      const candidate = path.join(parent, entry.name);
-      if (await looksLikeProjectRoot(candidate)) roots.push(candidate);
-    }
+    roots.push(...(await findProjectRootsUnder(root, directory)));
   }
   return roots.length > 0 ? roots.sort() : [root];
+}
+
+async function findProjectRootsUnder(root: string, directory: string) {
+  const parent = path.join(root, directory);
+  if (!(await fs.pathExists(parent))) return [];
+  const roots: string[] = [];
+  for (const entry of await fs.readdir(parent, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const candidate = path.join(parent, entry.name);
+    if (await looksLikeProjectRoot(candidate)) roots.push(candidate);
+  }
+  return roots;
 }
 
 async function isMonorepoRoot(root: string) {
@@ -201,16 +239,26 @@ async function isMonorepoRoot(root: string) {
 }
 
 async function looksLikeProjectRoot(root: string) {
-  for (const fileName of ["package.json", "Gemfile", "composer.json", "manage.py", "pyproject.toml", "go.mod", "Cargo.toml", "main.go"]) {
+  const packageJson = await readPackageJson(root);
+  if (packageJson && looksLikeRunnablePackage(packageJson)) return true;
+  for (const fileName of ["Gemfile", "composer.json", "manage.py", "pyproject.toml", "go.mod", "Cargo.toml", "main.go", "server.mjs", "server.js"]) {
     if (await fs.pathExists(path.join(root, fileName))) return true;
   }
   return false;
 }
 
+function looksLikeRunnablePackage(packageJson: PackageJson) {
+  const scripts = packageJson.scripts ?? {};
+  if (commandScriptNames.some((script) => Boolean(scripts[script]))) return true;
+  return Boolean(inferFrameworkCommand("pnpm", packageJson));
+}
+
+const commandScriptNames = ["dev", "dev:web", "dev:api", "start:dev", "serve", "preview"];
+
 async function inferCommand(root: string, packageJson: PackageJson | null) {
   const packageManager = await inferPackageManager(root);
   const scripts = packageJson?.scripts ?? {};
-  for (const script of ["dev", "dev:web", "dev:api", "start:dev", "serve", "preview"]) {
+  for (const script of commandScriptNames) {
     if (scripts[script]) return packageScriptCommand(packageManager, script);
   }
   const frameworkCommand = inferFrameworkCommand(packageManager, packageJson);
@@ -262,23 +310,27 @@ function inferProjectName(packageJson: { name?: string } | null, fallback = "web
 async function inferTargetPort(root: string, command: string) {
   const packageJson = await readPackageJson(root);
   const env = await readEnvFiles(root);
+  const scripts = packageJson?.scripts ?? {};
+  const startupScripts = [...commandScriptNames, "start"].flatMap((script) => (scripts[script] ? [scripts[script]] : []));
   const commandText = [
     command,
-    Object.values(packageJson?.scripts ?? {}).join("\n"),
+    startupScripts.join("\n"),
     Object.entries(env)
       .map(([key, value]) => `${key}=${value}`)
       .join("\n"),
     await readIfExists(path.join(root, "server.mjs")),
     await readIfExists(path.join(root, "server.js")),
+    await readIfExists(path.join(root, "src", "main.ts")),
+    await readIfExists(path.join(root, "src", "index.ts")),
     await readIfExists(path.join(root, "config", "puma.rb")),
     await readIfExists(path.join(root, "vite.config.ts")),
     await readIfExists(path.join(root, "vite.config.js"))
   ].join("\n");
 
-  const envPort = commandText.match(/\bPORT\s*=\s*(\d{2,5})\b/);
+  const envPort = commandText.match(/\b(?:PORT|VITE_PORT)\s*=\s*(\d{2,5})\b/);
   if (envPort) return Number(envPort[1]);
 
-  const fallbackEnvPort = commandText.match(/process\.env\.PORT\s*\?\?\s*['"`]?(\d{2,5})['"`]?/);
+  const fallbackEnvPort = commandText.match(/process\.env\.PORT\s*(?:\?\?|\|\|)\s*['"`]?(\d{2,5})['"`]?/);
   if (fallbackEnvPort) return Number(fallbackEnvPort[1]);
 
   const listenPort = commandText.match(/listen\(\s*(?:Number\(process\.env\.PORT\s*\?\?\s*)?['"`]?(\d{2,5})['"`]?/);
@@ -359,6 +411,7 @@ async function inferComposeServices(rootDir: string) {
           env: normalizeComposeEnv(value.environment),
           volumes: normalizeComposeList(value.volumes).map(String),
           dependsOn: normalizeDependsOn(value.depends_on),
+          composeFile: composePath,
           healthCheck: inferComposeHealthCheck(name, value.image, value.healthcheck, value.ports)
         }
       ];
@@ -372,6 +425,32 @@ async function findComposeFile(rootDir: string) {
     if (await fs.pathExists(candidate)) return candidate;
   }
   return null;
+}
+
+function attachComposeFiles(services: ServiceConfig[], rootDir: string) {
+  const composePath = findComposeFileSync(rootDir);
+  if (!composePath) return services;
+  const serviceNames = readComposeServiceNames(composePath);
+  if (serviceNames.size === 0) return services;
+  return services.map((service) => (service.composeFile || !serviceNames.has(service.name) ? service : { ...service, composeFile: composePath }));
+}
+
+function findComposeFileSync(rootDir: string) {
+  for (const fileName of ["compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml", "docker.yaml", "docker.yml"]) {
+    const candidate = path.join(rootDir, fileName);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+function readComposeServiceNames(composePath: string) {
+  try {
+    const parsed = YAML.parse(fs.readFileSync(composePath, "utf8")) as unknown;
+    if (!isRecord(parsed) || !isRecord(parsed.services)) return new Set<string>();
+    return new Set(Object.keys(parsed.services));
+  } catch {
+    return new Set<string>();
+  }
 }
 
 function normalizeComposeEnv(value: unknown) {

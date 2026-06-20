@@ -1,4 +1,16 @@
-import { containerName, downService, execServiceCommand, isDockerRunning, serviceLogTail, serviceLogs, serviceRunning, upService } from "./docker.js";
+import {
+  downService,
+  execServiceCommand,
+  isComposeService,
+  isDockerRunning,
+  serviceContainerName,
+  serviceHealthy,
+  serviceLogTail,
+  serviceLogs,
+  serviceRunning,
+  serviceTarget,
+  upService
+} from "./docker.js";
 import { waitForHealth } from "./health.js";
 import { kibacoError } from "./errors.js";
 import type { ServiceConfig } from "./types.js";
@@ -41,6 +53,7 @@ export async function startServices(config: ServiceStackConfig, serviceNames: st
     await upService(config, service);
     const healthy = await waitForHealth(service.healthCheck, undefined, {
       runCommand: async (command) => {
+        if (isComposeService(service)) return serviceHealthy(config, service);
         try {
           await execServiceCommand(config, service, command);
           return true;
@@ -72,13 +85,16 @@ export async function stopServices(config: ServiceStackConfig, serviceNames: str
 
 export async function getServiceStatuses(config: ServiceStackConfig): Promise<ServiceStatusRow[]> {
   return Promise.all(
-    config.services.map(async (service) => ({
-      name: service.name,
-      image: service.image,
-      container: containerName(config, service),
-      running: await serviceRunning(config, service),
-      ports: service.ports ?? []
-    }))
+    config.services.map(async (service) => {
+      const running = await serviceRunning(config, service);
+      return {
+        name: service.name,
+        image: service.image,
+        container: running ? await serviceContainerName(config, service) : serviceTarget(config, service),
+        running,
+        ports: service.ports ?? []
+      };
+    })
   );
 }
 
@@ -87,7 +103,7 @@ export async function showServiceLogs(config: ServiceStackConfig, serviceName: s
 }
 
 async function serviceHealthErrorMessage(config: ServiceStackConfig, service: ServiceConfig) {
-  const name = containerName(config, service);
+  const name = await serviceContainerName(config, service);
   const lines = [
     `Service health check failed: ${service.name}`,
     `Container: ${name}`,

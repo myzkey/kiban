@@ -26,6 +26,7 @@ kibaco init
 ```
 
 Kibaco infers sensible defaults from package managers, `package.json`, dev scripts, `.env` ports, common frameworks, simple backend/server files, monorepo app folders, and Compose files when it can.
+It prefers proxy port `8080`, but `kibaco init` automatically chooses another available proxy port when that would conflict with a project target or a local process.
 
 Then start the environment:
 
@@ -99,9 +100,11 @@ http://api.localhost:8080
 kibaco dev
 kibaco dev web
 kibaco dev --select
+kibaco dev --verbose
 ```
 
 Start services, project commands, and the proxy together. With no project names, Kibaco starts all configured projects and their referenced services.
+Project stdout/stderr is written to log files but is not streamed to the terminal by default. Use `--verbose` when you want to stream project logs inline.
 
 ```sh
 kibaco doctor
@@ -114,6 +117,12 @@ kibaco list
 ```
 
 Show configured projects and their URLs.
+
+```sh
+kibaco urls
+```
+
+Show only the configured local URLs.
 
 ```sh
 kibaco ports
@@ -144,6 +153,7 @@ Open a project through its configured local URL.
 ## Docker Services
 
 When a project lists services, Kibaco starts those containers before running the app command and waits for health checks when configured.
+Services inferred from a Compose file are managed through `docker compose`, so `.env`, `env_file`, variable substitution, networks, and volumes follow Docker Compose behavior.
 
 ```sh
 kibaco services up
@@ -225,6 +235,20 @@ node --version # v24 or newer
 pnpm install
 pnpm build
 pnpm link --global
+```
+
+To switch between the published npm package and this checkout's global link:
+
+```sh
+pnpm switch:status
+pnpm switch:local
+pnpm switch:npm
+```
+
+To install a specific published version:
+
+```sh
+KIBACO_NPM_VERSION=0.0.1 pnpm switch:npm
 ```
 
 ## Security

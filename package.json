@@ -1,6 +1,6 @@
 {
   "name": "kibaco",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "An AI-friendly local development stack manager.",
   "type": "module",
   "packageManager": "pnpm@10.14.0",
@@ -34,6 +34,9 @@
     "prepare": "husky",
     "release": "pnpm build && changeset publish",
     "smoke": "pnpm build && node scripts/smoke-local-http.mjs",
+    "switch:local": "scripts/switch-kibaco.sh local",
+    "switch:npm": "scripts/switch-kibaco.sh npm",
+    "switch:status": "scripts/switch-kibaco.sh status",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

@@ -17,6 +17,7 @@ export const serviceSchema = z.object({
   env: z.record(z.string()).default({}).optional(),
   volumes: z.array(z.string()).default([]).optional(),
   dependsOn: z.array(z.string()).default([]).optional(),
+  composeFile: z.string().optional(),
   healthCheck: healthCheckSchema.optional()
 });
 

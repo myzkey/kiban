@@ -66,6 +66,7 @@ describe("dev", () => {
 
     expect(calls).toEqual(["services", "project", "proxy"]);
     expect(assertProxyPortUsable).toHaveBeenCalledWith(8080);
+    expect(spawnStreamingProject).toHaveBeenCalledWith(expect.objectContaining({ name: "web" }), expect.objectContaining({ stream: false }));
     expect(closeProxyHandle).toHaveBeenCalledWith({ reused: false, server: {} });
   });
 
@@ -103,6 +104,14 @@ describe("dev", () => {
     expect(spawnStreamingProject).toHaveBeenCalledTimes(1);
     expect(spawnStreamingProject).toHaveBeenCalledWith(expect.objectContaining({ name: "api" }), expect.anything());
     expect(startOrReuseProxy).toHaveBeenCalledWith(expect.objectContaining({ projects: [expect.objectContaining({ name: "api" })] }));
+  });
+
+  it("can stream project logs when requested", async () => {
+    const { runDev } = await import("./dev.js");
+
+    await runDev(config(), { streamLogs: true });
+
+    expect(spawnStreamingProject).toHaveBeenCalledWith(expect.objectContaining({ name: "web" }), expect.objectContaining({ stream: true }));
   });
 
   it("rejects unknown selected projects", async () => {

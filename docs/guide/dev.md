@@ -6,6 +6,7 @@ Run:
 kibaco dev
 kibaco dev web
 kibaco dev --select
+kibaco dev --verbose
 ```
 
 Kibaco will:
@@ -17,9 +18,9 @@ Kibaco will:
 5. Start or reuse the local proxy
 6. Print the URLs for each project
 
-With no project names, `kibaco dev` starts all configured projects. Use project names or `--select` when you only want part of the workspace.
+With no project names, `kibaco dev` starts all configured projects. Use project names or `--select` when you only want part of the workspace. Use `--verbose` when you want project output streamed inline.
 
-Kibaco captures each project process log while still streaming it to the terminal.
+Kibaco captures each project process log without streaming it to the terminal by default.
 
 ```text
 ~/.kibaco/logs/{workspace}/{project}.log
@@ -35,6 +36,12 @@ kibaco logs web --follow
 kibaco logs --all --tail 200
 kibaco logs web --jsonl
 kibaco logs mysql
+```
+
+Show the configured local URLs again after startup:
+
+```sh
+kibaco urls
 ```
 
 Restart a project without stopping the proxy:

@@ -4,20 +4,28 @@ const isDockerRunning = vi.fn();
 const upService = vi.fn();
 const downService = vi.fn();
 const execServiceCommand = vi.fn();
+const isComposeService = vi.fn();
 const serviceRunning = vi.fn();
+const serviceHealthy = vi.fn();
 const serviceLogTail = vi.fn();
 const serviceLogs = vi.fn();
 const containerName = vi.fn();
+const serviceContainerName = vi.fn();
+const serviceTarget = vi.fn();
 const waitForHealth = vi.fn();
 
 vi.mock("./docker.js", () => ({
   containerName,
   downService,
   execServiceCommand,
+  isComposeService,
   isDockerRunning,
   serviceLogTail,
   serviceLogs,
+  serviceHealthy,
   serviceRunning,
+  serviceContainerName,
+  serviceTarget,
   upService
 }));
 
@@ -31,10 +39,14 @@ describe("service-runtime", () => {
     upService.mockReset().mockResolvedValue(undefined);
     downService.mockReset().mockResolvedValue(undefined);
     execServiceCommand.mockReset().mockResolvedValue(undefined);
+    isComposeService.mockReset().mockReturnValue(false);
     serviceRunning.mockReset().mockResolvedValue(true);
+    serviceHealthy.mockReset().mockResolvedValue(true);
     serviceLogTail.mockReset().mockResolvedValue("database failed to initialize");
     serviceLogs.mockReset().mockResolvedValue(undefined);
     containerName.mockReset().mockImplementation((config, service) => `kibaco-${config.workspace}-${service.name}`);
+    serviceContainerName.mockReset().mockImplementation((config, service) => `kibaco-${config.workspace}-${service.name}`);
+    serviceTarget.mockReset().mockImplementation((config, service) => `kibaco-${config.workspace}-${service.name}`);
     waitForHealth.mockReset().mockResolvedValue(true);
   });
 

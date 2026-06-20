@@ -11,6 +11,7 @@ type ProjectLogStream = "stdout" | "stderr";
 type SpawnProjectOptions = {
   workspace: string;
   log: LogConfig;
+  stream?: boolean;
 };
 
 export function spawnStreamingProject(project: ProxyProjectConfig, options: SpawnProjectOptions) {
@@ -24,11 +25,11 @@ export function spawnStreamingProject(project: ProxyProjectConfig, options: Spaw
 
   child.stdout?.on("data", (chunk: Buffer) => {
     writeProjectLog(options.workspace, project.name, "stdout", chunk, options.log);
-    process.stdout.write(prefixLines(project.name, chunk));
+    if (options.stream ?? true) process.stdout.write(prefixLines(project.name, chunk));
   });
   child.stderr?.on("data", (chunk: Buffer) => {
     writeProjectLog(options.workspace, project.name, "stderr", chunk, options.log);
-    process.stderr.write(prefixLines(project.name, chunk));
+    if (options.stream ?? true) process.stderr.write(prefixLines(project.name, chunk));
   });
   child.on("exit", (code, signal) => {
     warn(`${project.name} exited${code === null ? "" : ` with code ${code}`}${signal ? ` (${signal})` : ""}`);

@@ -1,6 +1,7 @@
 # Proxy
 
 Kibaco exposes stable local URLs through a reverse proxy.
+By default, Kibaco prefers port `8080`, but `kibaco init` chooses another available proxy port when `8080` is already used by one of the inferred project targets or another local process. Run `kibaco urls` to see the saved URLs for your workspace.
 
 ```json
 {
