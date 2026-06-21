@@ -55,6 +55,7 @@ export const proxyProjectSchema = z.object({
 });
 
 export const proxyConfigSchema = z.object({
+  $schema: z.string().url().optional(),
   workspace: z.string().min(1).default("default"),
   proxyPort: z.number().int().positive().default(8080),
   log: logConfigSchema.default({}),

@@ -3,7 +3,17 @@ import os from "node:os";
 import fs from "fs-extra";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { proxyConfigSchema } from "./types.js";
-import { buildInitialProxyConfig, findProxyConfig, loadProxyConfig, normalizeProxyConfig, writeInitialProxyConfig } from "./config.js";
+import {
+  buildInitialProxyConfig,
+  discoverProxyConfig,
+  findProxyConfig,
+  formatProxyConfig,
+  loadProxyConfig,
+  normalizeProxyConfig,
+  updateProjectTarget,
+  validateProxyConfig,
+  writeInitialProxyConfig
+} from "./config.js";
 
 vi.mock("./ports.js", async () => {
   const actual = await vi.importActual<typeof import("./ports.js")>("./ports.js");
@@ -404,7 +414,7 @@ describe("kibaco config", () => {
     expect(config.projects[0]?.services).toEqual(["postgres", "redis"]);
   });
 
-  it("stores workspace config outside the project and resolves from child directories", async () => {
+  it("stores workspace config in .kibaco/config.json and resolves from child directories", async () => {
     process.env.KIBACO_HOME = await fs.mkdtemp(path.join(os.tmpdir(), "kibaco-home-"));
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "kibaco-config-"));
     const nested = path.join(root, "apps", "web");
@@ -422,25 +432,149 @@ describe("kibaco config", () => {
       },
       root
     );
+
+    const realRoot = await fs.realpath(root);
+    expect(configPath).toBe(path.join(realRoot, ".kibaco", "config.json"));
+    await expect(fs.pathExists(path.join(root, "kibaco.config.example.json"))).resolves.toBe(true);
+    await expect(fs.readFile(path.join(root, ".gitignore"), "utf8")).resolves.toContain(".kibaco/");
+    await expect(fs.readFile(path.join(root, ".gitignore"), "utf8")).resolves.toContain("kibaco.config.json");
+    await expect(findProxyConfig(nested)).resolves.toBe(configPath);
+    const loaded = await loadProxyConfig(nested);
+    expect(loaded.config.workspace).toBe("demo");
+    await expect(fs.realpath(loaded.config.projects[0]?.cwd ?? "")).resolves.toBe(await fs.realpath(nested));
+  });
+
+  it("prefers .kibaco/config.json over legacy local and global configs", async () => {
+    process.env.KIBACO_HOME = await fs.mkdtemp(path.join(os.tmpdir(), "kibaco-home-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "kibaco-prefer-"));
+    await fs.ensureDir(path.join(root, ".kibaco"));
+    await fs.writeJson(path.join(root, ".kibaco", "config.json"), {
+      workspace: "local",
+      proxyPort: 8080,
+      services: [],
+      projects: []
+    });
+    await fs.writeJson(path.join(root, "kibaco.config.json"), {
+      workspace: "legacy",
+      proxyPort: 18080,
+      services: [],
+      projects: []
+    });
+
+    const discovery = await discoverProxyConfig(root);
+
+    const realRoot = await fs.realpath(root);
+    expect(discovery.configPath).toBe(path.join(realRoot, ".kibaco", "config.json"));
+    expect(discovery.source).toBe("local");
+  });
+
+  it("validates, formats, and updates project targets", async () => {
+    process.env.KIBACO_HOME = await fs.mkdtemp(path.join(os.tmpdir(), "kibaco-home-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "kibaco-edit-"));
+    const configPath = await writeInitialProxyConfig(
+      undefined,
+      {
+        workspace: "demo",
+        proxyPort: 8088,
+        projectName: "web",
+        host: "web.localhost",
+        target: "http://localhost:3000",
+        command: "pnpm dev",
+        cwd: "."
+      },
+      root
+    );
+
+    await fs.writeFile(configPath, JSON.stringify(await fs.readJson(configPath)));
+    await expect(formatProxyConfig(root)).resolves.toBe(configPath);
+    await expect(validateProxyConfig(root)).resolves.toEqual(expect.objectContaining({ path: configPath, valid: true }));
+    await expect(updateProjectTarget("web", "http://localhost:3004", root)).resolves.toEqual(
+      expect.objectContaining({
+        before: "http://localhost:3000",
+        after: "http://localhost:3004",
+        valid: true
+      })
+    );
+    await expect(fs.readJson(configPath)).resolves.toEqual(
+      expect.objectContaining({
+        projects: [expect.objectContaining({ name: "web", target: "http://localhost:3004" })]
+      })
+    );
+  });
+
+  it("applies repo-local overrides by name", async () => {
+    process.env.KIBACO_HOME = await fs.mkdtemp(path.join(os.tmpdir(), "kibaco-home-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "kibaco-override-"));
+    await fs.ensureDir(path.join(root, "apps", "web"));
+    const configPath = await writeInitialProxyConfig(
+      undefined,
+      {
+        workspace: "demo",
+        proxyPort: 8088,
+        projectName: "web",
+        host: "web.localhost",
+        target: "http://localhost:3000",
+        command: "pnpm dev",
+        cwd: "apps/web"
+      },
+      root
+    );
     await fs.writeJson(configPath, {
       workspace: "demo",
       proxyPort: 8088,
-      services: [],
+      services: [
+        {
+          name: "postgres",
+          image: "postgres:16",
+          ports: ["5432:5432"],
+          env: {
+            POSTGRES_DB: "app"
+          }
+        }
+      ],
       projects: [
         {
           name: "web",
           host: "web.localhost",
           target: "http://localhost:3000",
           command: "pnpm dev",
-          cwd: "apps/web"
+          cwd: "apps/web",
+          services: ["postgres"]
         }
       ]
     });
+    await fs.writeFile(
+      path.join(root, "kibaco.yaml"),
+      [
+        "proxyPort: 18080",
+        "services:",
+        "  - name: postgres",
+        "    env:",
+        "      POSTGRES_DB: local_app",
+        "projects:",
+        "  - name: web",
+        "    target: http://localhost:4000",
+        "    command: pnpm dev -- --port 4000"
+      ].join("\n")
+    );
 
-    await expect(fs.pathExists(path.join(root, "kibaco.config.json"))).resolves.toBe(false);
-    await expect(findProxyConfig(nested)).resolves.toBe(configPath);
-    const loaded = await loadProxyConfig(nested);
-    expect(loaded.config.workspace).toBe("demo");
-    await expect(fs.realpath(loaded.config.projects[0]?.cwd ?? "")).resolves.toBe(await fs.realpath(nested));
+    const loaded = await loadProxyConfig(path.join(root, "apps", "web"));
+
+    expect(loaded.config.proxyPort).toBe(18080);
+    expect(loaded.config.services[0]).toEqual(
+      expect.objectContaining({
+        name: "postgres",
+        image: "postgres:16",
+        env: { POSTGRES_DB: "local_app" }
+      })
+    );
+    expect(loaded.config.projects[0]).toEqual(
+      expect.objectContaining({
+        name: "web",
+        host: "web.localhost",
+        target: "http://localhost:4000",
+        command: "pnpm dev -- --port 4000"
+      })
+    );
   });
 });

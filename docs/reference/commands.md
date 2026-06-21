@@ -76,6 +76,17 @@ kibaco doctor --json
 
 `--json` prints a structured report with `workspace`, `proxyPort`, `services`, `projects`, and diagnostic `issues`.
 
+## `kibaco status`
+
+Show workspace, service, and project status.
+
+```sh
+kibaco status
+kibaco status --json
+```
+
+`--json` prints the same structured report shape as `kibaco doctor --json`.
+
 ## `kibaco ports`
 
 Show local listening ports and matching projects.

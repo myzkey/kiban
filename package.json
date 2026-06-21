@@ -18,7 +18,8 @@
   "files": [
     "dist",
     "README.md",
-    "examples"
+    "examples",
+    "schemas"
   ],
   "scripts": {
     "build": "tsc",

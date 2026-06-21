@@ -4,13 +4,14 @@ import { registerModernCommands } from "./commands/modern.js";
 import { registerStackCommands } from "./commands/stack.js";
 import { registerSystemCommands } from "./commands/system.js";
 import { error as printError } from "./output.js";
+import { packageVersion } from "./version.js";
 
 const program = new Command();
 
 program
   .name("kibaco")
   .description("Start local app commands, Docker services, and localhost URLs with one command.")
-  .version("0.0.1");
+  .version(packageVersion());
 
 registerModernCommands(program);
 registerStackCommands(program);

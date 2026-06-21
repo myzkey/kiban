@@ -7,6 +7,7 @@ import { registerModernCommands } from "./commands/modern.js";
 import { registerStackCommands } from "./commands/stack.js";
 import { writeInitialProxyConfig } from "./config.js";
 import { consumeRestartRequests } from "./restart.js";
+import { packageVersion } from "./version.js";
 
 describe("cli smoke", () => {
   const originalCwd = process.cwd();
@@ -17,6 +18,12 @@ describe("cli smoke", () => {
     if (originalKibacoHome === undefined) delete process.env.KIBACO_HOME;
     else process.env.KIBACO_HOME = originalKibacoHome;
     vi.restoreAllMocks();
+  });
+
+  it("uses the package version for the CLI version", async () => {
+    const pkg = (await fs.readJson(path.join(process.cwd(), "package.json"))) as { version: string };
+
+    expect(packageVersion()).toBe(pkg.version);
   });
 
   it("prints list --json from the registered workspace config", async () => {
@@ -114,6 +121,39 @@ describe("cli smoke", () => {
     });
   });
 
+  it("prints workspace status --json", async () => {
+    const cwd = await fixtureDir();
+    process.chdir(cwd);
+    const output = await runModernCommand(["status", "--json"]);
+
+    expect(JSON.parse(output)).toEqual(
+      expect.objectContaining({
+        workspace: "smoke",
+        proxyPort: 8080,
+        services: [expect.objectContaining({ name: "postgres" })],
+        projects: [expect.objectContaining({ name: "web", url: "http://web.localhost:8080" })],
+        issues: expect.arrayContaining([expect.objectContaining({ code: "config_found" })])
+      })
+    );
+  });
+
+  it("validates, lists, edits, and explains config through CLI commands", async () => {
+    const cwd = await fixtureDir();
+    process.chdir(cwd);
+
+    await expect(runModernCommand(["config", "validate"])).resolves.toContain("Valid: true");
+    await expect(runModernCommand(["config", "list-routes"])).resolves.toContain("http://web.localhost:8080 -> http://localhost:3000");
+
+    const setOutput = await runModernCommand(["config", "set-target", "web", "http://localhost:3004"]);
+    expect(setOutput).toContain("before: http://localhost:3000");
+    expect(setOutput).toContain("after:  http://localhost:3004");
+    expect(setOutput).toContain("Config valid: true");
+
+    const explainOutput = await runModernCommand(["explain"]);
+    expect(explainOutput).toContain("This project uses Kibaco.");
+    expect(explainOutput).toContain("check Kibaco config before Caddy, nginx, docker-compose, or system proxy");
+  });
+
   it("requests a project restart", async () => {
     const cwd = await fixtureDir();
     process.chdir(cwd);
@@ -184,12 +224,14 @@ describe("cli smoke", () => {
     expect(help).toContain("dev");
     expect(help).toContain("export");
     expect(help).toContain("restart");
+    expect(help).toContain("status");
     expect(help).toContain("logs");
     expect(help).toContain("doctor");
     expect(help).toContain("open [project]");
+    expect(help).toContain("config");
+    expect(help).toContain("explain");
     expect(help).not.toContain("legacy");
     expect(help).not.toContain("up [options]");
-    expect(help).not.toContain("status [options]");
   });
 });
 

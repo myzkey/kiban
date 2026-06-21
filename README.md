@@ -37,7 +37,7 @@ Kibaco manages this in one workspace config and starts the whole local developme
 
 Kibaco is a CLI for managing local development environments.
 
-It stores app commands, local URLs, reverse proxy routing, logs, Docker services, and health checks in Kibaco's workspace config under `~/.kibaco`, so your project directory stays clean.
+It stores app commands, local URLs, reverse proxy routing, logs, Docker services, and health checks in a developer-local `.kibaco/config.json`, while `kibaco.config.example.json` and the JSON Schema can be committed for teammates and AI tools.
 
 Kibaco is positioned as a local development environment manager for the AI era:
 
@@ -142,6 +142,8 @@ This makes it easier to share the current environment state with AI tools or tea
 - Start Docker services before app commands
 - Reuse an already-running Kibaco proxy
 - Inspect ports, services, projects, and target reachability with `kibaco doctor`
+- Explain local config discovery and routes with `kibaco explain`
+- Validate, format, list, and safely edit routes with `kibaco config ...`
 - Print structured status with `kibaco doctor --json`
 - Export a shareable environment view with `kibaco export`
 - Store project logs under `~/.kibaco/logs/{workspace}`
@@ -161,6 +163,14 @@ kibaco init
 Kibaco infers sensible defaults from package managers, `package.json`, dev scripts, `.env` ports, common frameworks, simple backend/server files, monorepo app folders, and Compose files when it can.
 
 It prefers proxy port `8080`, but `kibaco init` automatically chooses another available proxy port when that would conflict with a project target or a local process.
+
+`kibaco init` writes local config to `.kibaco/config.json`, adds `.kibaco/` and `kibaco.config.json` to `.gitignore`, and writes a committable `kibaco.config.example.json`.
+
+Explain what Kibaco manages in this project:
+
+```sh
+kibaco explain
+```
 
 Start the environment:
 
@@ -270,9 +280,11 @@ Project stdout/stderr is written to log files but is not streamed to the termina
 ```sh
 kibaco doctor
 kibaco doctor --json
+kibaco status
+kibaco status --json
 ```
 
-Check the active config, proxy port, Docker availability, service references, project working directories, service status, project URLs, and target reachability.
+Check the active config, proxy port, Docker availability, service references, project working directories, service status, project URLs, and target reachability. Use `status` for a compact current-state view.
 
 ```sh
 kibaco list
