@@ -1,16 +1,20 @@
 import path from "node:path";
-import crypto from "node:crypto";
 import readline from "node:readline/promises";
 import fs from "fs-extra";
 import YAML from "yaml";
 import { proxyConfigSchema, type ProxyConfig, type ProxyProjectConfig, type ServiceConfig } from "./types.js";
-import { ensureKibacoDirs, expandHome, workspaceIndexFile, workspacesDir } from "./paths.js";
+import { ensureKibacoDirs, expandHome, workspaceIndexFile } from "./paths.js";
 import { isPortAvailable } from "./ports.js";
 import { targetPort } from "./proxy.js";
 
 export class ConfigError extends Error {
   code = 2;
 }
+
+export const CONFIG_SCHEMA_URL = "https://kibaco.dev/schemas/kibaco.config.schema.json";
+export const LOCAL_CONFIG_PATH = ".kibaco/config.json";
+export const LEGACY_LOCAL_CONFIG_PATH = "kibaco.config.json";
+export const EXAMPLE_CONFIG_PATH = "kibaco.config.example.json";
 
 type WorkspaceIndex = {
   workspaces: Array<{
@@ -27,6 +31,29 @@ type ConfigOverride = Partial<Omit<ProxyConfig, "projects" | "services">> & {
 
 export async function findProxyConfig(startDir = process.cwd()): Promise<string | null> {
   return (await findProxyWorkspace(startDir))?.configPath ?? null;
+}
+
+export async function discoverProxyConfig(startDir = process.cwd()) {
+  const root = await resolveWorkspaceRoot(startDir);
+  const checked: Array<{ path: string; found: boolean; used: boolean; source: "local" | "legacy-local" | "global-index" }> = [];
+
+  for (const candidate of await localConfigCandidates(root)) {
+    const found = await fs.pathExists(candidate.path);
+    checked.push({ ...candidate, found, used: found });
+    if (found) return { root: candidate.root, configPath: candidate.path, source: candidate.source, checked };
+  }
+
+  const index = await readWorkspaceIndex();
+  const matches = index.workspaces
+    .filter((workspace) => root === workspace.root || root.startsWith(`${workspace.root}${path.sep}`))
+    .sort((a, b) => b.root.length - a.root.length);
+  for (const workspace of matches) {
+    const found = await fs.pathExists(workspace.configPath);
+    checked.push({ path: workspace.configPath, found, used: found, source: "global-index" });
+    if (found) return { root: workspace.root, configPath: workspace.configPath, workspace: workspace.workspace, source: "global-index" as const, checked };
+  }
+
+  return { root, configPath: null, workspace: null, source: null, checked };
 }
 
 export async function loadProxyConfig(startDir = process.cwd()): Promise<{ path: string; config: ProxyConfig }> {
@@ -97,9 +124,11 @@ export async function writeInitialProxyConfig(_targetPath?: string, answers: Ini
   if (existing?.root === root && !options.force) throw new ConfigError(`Kibaco workspace already exists for ${root}.`);
 
   const config = await buildInitialProxyConfig(answers, root, options);
-  const configPath = existing?.root === root ? existing.configPath : workspaceConfigPath(root, config.workspace);
+  const configPath = _targetPath ? path.resolve(root, _targetPath) : localConfigPath(root);
   await fs.ensureDir(path.dirname(configPath));
   await fs.writeJson(configPath, config, { spaces: 2 });
+  await ensureLocalConfigIgnored(root);
+  await writeExampleProxyConfig(root, config);
   await registerProxyWorkspace({ root, configPath, workspace: config.workspace });
   return configPath;
 }
@@ -131,11 +160,58 @@ export async function buildInitialProxyConfig(answers: InitialProxyConfigAnswers
     projects
   });
   return proxyConfigSchema.parse({
+    $schema: CONFIG_SCHEMA_URL,
     workspace: resolved.workspace ?? defaults.workspace,
     proxyPort,
     services: inferredServices,
     projects
   });
+}
+
+export async function writeExampleProxyConfig(rootDir = process.cwd(), config: ProxyConfig = defaultInitialProxyConfig()) {
+  const root = await resolveWorkspaceRoot(rootDir);
+  const examplePath = path.join(root, EXAMPLE_CONFIG_PATH);
+  const example = proxyConfigSchema.parse({ ...config, $schema: CONFIG_SCHEMA_URL });
+  await fs.writeJson(examplePath, denormalizeConfigForWorkspace(example, root), { spaces: 2 });
+  return examplePath;
+}
+
+export async function validateProxyConfig(startDir = process.cwd()) {
+  const workspace = await findProxyWorkspace(startDir);
+  if (!workspace) throw new ConfigError("Kibaco workspace not found. Run `kibaco init` from the workspace root first.");
+  const raw = await readJsonConfig(workspace.configPath);
+  const merged = await applyRepoLocalOverride(raw, workspace.root);
+  const result = proxyConfigSchema.safeParse(merged);
+  return {
+    path: workspace.configPath,
+    valid: result.success,
+    errors: result.success ? [] : result.error.issues.map((issue) => formatConfigValidationIssue(issue.path, issue.message)),
+    config: result.success ? normalizeProxyConfig(result.data, workspace.root) : null
+  };
+}
+
+export async function formatProxyConfig(startDir = process.cwd()) {
+  const workspace = await findProxyWorkspace(startDir);
+  if (!workspace) throw new ConfigError("Kibaco workspace not found. Run `kibaco init` from the workspace root first.");
+  const raw = await readJsonConfig(workspace.configPath);
+  const config = proxyConfigSchema.parse(raw);
+  await fs.writeJson(workspace.configPath, config, { spaces: 2 });
+  return workspace.configPath;
+}
+
+export async function updateProjectTarget(projectName: string, targetUrl: string, startDir = process.cwd()) {
+  const workspace = await findProxyWorkspace(startDir);
+  if (!workspace) throw new ConfigError("Kibaco workspace not found. Run `kibaco init` from the workspace root first.");
+  new URL(targetUrl);
+  const raw = await readJsonConfig(workspace.configPath);
+  const config = proxyConfigSchema.parse(raw);
+  const index = config.projects.findIndex((project) => project.name === projectName);
+  if (index === -1) throw new ConfigError(`Project not found: ${projectName}`);
+  const before = config.projects[index]?.target ?? "";
+  config.projects[index] = { ...config.projects[index], target: targetUrl };
+  const valid = proxyConfigSchema.safeParse(config).success;
+  await fs.writeJson(workspace.configPath, config, { spaces: 2 });
+  return { path: workspace.configPath, projectName, before, after: targetUrl, valid };
 }
 
 async function resolveProxyPort(preferredPort: number, options: { explicit: boolean; projects: InferredProject[] }) {
@@ -612,6 +688,7 @@ export function defaultInitialProxyConfig(): ProxyConfig {
     cwd: "."
   };
   return proxyConfigSchema.parse({
+    $schema: CONFIG_SCHEMA_URL,
     workspace: defaults.workspace,
     proxyPort: defaults.proxyPort,
     services: [],
@@ -651,7 +728,15 @@ async function askInitialProxyConfig(defaults: Required<InitialProxyConfigAnswer
 }
 
 async function findProxyWorkspace(startDir = process.cwd()) {
-  const current = await resolveWorkspaceRoot(startDir);
+  const discovered = await discoverProxyConfig(startDir);
+  if (discovered.configPath) {
+    return {
+      root: discovered.root,
+      configPath: discovered.configPath,
+      workspace: discovered.workspace ?? path.basename(discovered.root) ?? "default"
+    };
+  }
+  const current = discovered.root;
   const index = await readWorkspaceIndex();
   const matches = index.workspaces
     .filter((workspace) => current === workspace.root || current.startsWith(`${workspace.root}${path.sep}`))
@@ -691,10 +776,86 @@ async function resolveWorkspaceRoot(value: string) {
   }
 }
 
-function workspaceConfigPath(root: string, workspace: string) {
-  const hash = crypto.createHash("sha1").update(root).digest("hex").slice(0, 10);
-  const slug = workspace.replace(/[^a-zA-Z0-9_.-]/g, "-") || "default";
-  return path.join(workspacesDir(), `${slug}-${hash}`, "config.json");
+function localConfigPath(root: string) {
+  return path.join(root, LOCAL_CONFIG_PATH);
+}
+
+async function localConfigCandidates(startDir: string) {
+  const candidates: Array<{ root: string; path: string; source: "local" | "legacy-local" }> = [];
+  let directory = path.resolve(startDir);
+  while (true) {
+    candidates.push({ root: directory, path: path.join(directory, LOCAL_CONFIG_PATH), source: "local" });
+    candidates.push({ root: directory, path: path.join(directory, LEGACY_LOCAL_CONFIG_PATH), source: "legacy-local" });
+    const parent = path.dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+  return candidates;
+}
+
+async function ensureLocalConfigIgnored(root: string) {
+  const gitignorePath = path.join(root, ".gitignore");
+  const existing = await readIfExists(gitignorePath);
+  const lines = existing.split(/\r?\n/).filter((line, index, array) => !(index === array.length - 1 && line === ""));
+  const entries = [".kibaco/", "kibaco.config.json"];
+  let changed = false;
+  for (const entry of entries) {
+    if (lines.some((line) => line.trim() === entry)) continue;
+    lines.push(entry);
+    changed = true;
+  }
+  if (!changed && existing.length > 0) return;
+  await fs.writeFile(gitignorePath, `${lines.join("\n")}\n`);
+}
+
+async function readJsonConfig(filePath: string) {
+  try {
+    return (await fs.readJson(filePath)) as unknown;
+  } catch (error) {
+    throw new ConfigError(`Invalid JSON config: ${filePath}. ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function denormalizeConfigForWorkspace(config: ProxyConfig, root: string): ProxyConfig {
+  return {
+    ...config,
+    services: config.services.map((service) => ({
+      ...service,
+      composeFile: service.composeFile && path.isAbsolute(service.composeFile) ? path.relative(root, service.composeFile) || "." : service.composeFile
+    })),
+    projects: config.projects.map((project) => ({
+      ...project,
+      cwd: path.isAbsolute(project.cwd) ? path.relative(root, project.cwd) || "." : project.cwd
+    }))
+  };
+}
+
+function formatConfigValidationIssue(pathParts: Array<string | number>, message: string) {
+  const field = formatIssuePath(pathParts);
+  return {
+    field,
+    message: `${field} ${message}`,
+    example: configFieldExample(field)
+  };
+}
+
+function formatIssuePath(pathParts: Array<string | number>) {
+  if (pathParts.length === 0) return "config";
+  return pathParts
+    .map((part, index) => {
+      if (typeof part === "number") return `[${part}]`;
+      return index === 0 ? part : `.${part}`;
+    })
+    .join("");
+}
+
+function configFieldExample(field: string) {
+  if (field.endsWith(".target") || field === "target") return "http://localhost:3000";
+  if (field.endsWith(".host") || field === "host") return "web.localhost";
+  if (field.endsWith(".command") || field === "command") return "pnpm dev";
+  if (field.endsWith(".cwd") || field === "cwd") return ".";
+  if (field === "proxyPort") return "8080";
+  return undefined;
 }
 
 export function findProxyProject(config: ProxyConfig, name: string): ProxyProjectConfig {

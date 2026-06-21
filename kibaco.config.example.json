@@ -1,0 +1,16 @@
+{
+  "$schema": "https://kibaco.dev/schemas/kibaco.config.schema.json",
+  "workspace": "example",
+  "proxyPort": 8080,
+  "projects": [
+    {
+      "name": "web",
+      "host": "web.localhost",
+      "target": "http://localhost:3000",
+      "command": "pnpm dev",
+      "cwd": ".",
+      "services": []
+    }
+  ],
+  "services": []
+}

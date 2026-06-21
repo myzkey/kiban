@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import http from "node:http";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createProxyHandler, proxyUrl, targetPort } from "./proxy.js";
+import { createProxyHandler, createProxyUpgradeHandler, proxyUrl, targetPort } from "./proxy.js";
 import type { ProxyConfig } from "./types.js";
 
 const config: ProxyConfig = {
@@ -91,6 +91,57 @@ describe("proxy", () => {
       }, 0);
     });
   });
+
+  it("proxies websocket upgrade requests for HMR", async () => {
+    let targetRequest: PassThrough | undefined;
+    let targetSocket: PassThrough | undefined;
+    const requestSpy = vi.spyOn(http, "request").mockImplementation(() => {
+      targetRequest = new PassThrough();
+      targetSocket = new PassThrough();
+      targetSocket.setTimeout = vi.fn() as unknown as (msecs: number, callback?: () => void) => PassThrough;
+      return targetRequest as unknown as http.ClientRequest;
+    });
+    const clientSocket = fakeSocket();
+    const request = fakeRequest("/_next/webpack-hmr", "web.localhost:8080");
+    request.headers = {
+      ...request.headers,
+      connection: "Upgrade",
+      upgrade: "websocket",
+      "sec-websocket-key": "abc"
+    };
+
+    createProxyUpgradeHandler(config)(request, clientSocket, Buffer.from("client-head"));
+    const targetResponse = new PassThrough() as PassThrough & {
+      statusCode: number;
+      statusMessage: string;
+      headers: Record<string, string>;
+    };
+    targetResponse.statusCode = 101;
+    targetResponse.statusMessage = "Switching Protocols";
+    targetResponse.headers = {
+      upgrade: "websocket",
+      connection: "Upgrade",
+      "sec-websocket-accept": "accepted"
+    };
+    targetRequest?.emit("upgrade", targetResponse, targetSocket, Buffer.from("server-head"));
+
+    expect(requestSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hostname: "localhost",
+        port: "3000",
+        path: "/_next/webpack-hmr",
+        headers: expect.objectContaining({
+          host: "localhost:3000",
+          upgrade: "websocket",
+          "sec-websocket-key": "abc"
+        })
+      })
+    );
+    expect(clientSocket.body).toContain("HTTP/1.1 101 Switching Protocols");
+    expect(clientSocket.body).toContain("sec-websocket-accept: accepted");
+    expect(clientSocket.body).toContain("server-head");
+    expect(targetSocket?.read()?.toString()).toBe("client-head");
+  });
 });
 
 function fakeRequest(url: string, host: string) {
@@ -125,4 +176,20 @@ function fakeResponse() {
     emitter.emit("finish");
   };
   return emitter as unknown as http.ServerResponse & { statusCode?: number; headers: Record<string, string | number | string[]>; body: string };
+}
+
+function fakeSocket() {
+  const socket = new PassThrough() as PassThrough & {
+    body: string;
+    setTimeout: (msecs: number, callback?: () => void) => PassThrough;
+    destroy: () => PassThrough;
+  };
+  socket.body = "";
+  socket.write = ((chunk: string | Buffer) => {
+    socket.body += chunk.toString();
+    return true;
+  }) as typeof socket.write;
+  socket.setTimeout = vi.fn() as unknown as (msecs: number, callback?: () => void) => PassThrough;
+  socket.destroy = vi.fn(() => socket) as unknown as () => PassThrough;
+  return socket as unknown as import("node:net").Socket & { body: string };
 }

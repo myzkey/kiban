@@ -1,7 +1,17 @@
 import readline from "node:readline/promises";
 import type { Command } from "commander";
 import open from "open";
-import { buildInitialProxyConfig, findProxyProject, loadProxyConfig, writeInitialProxyConfig } from "../config.js";
+import {
+  buildInitialProxyConfig,
+  discoverProxyConfig,
+  findProxyProject,
+  formatProxyConfig,
+  loadProxyConfig,
+  updateProjectTarget,
+  validateProxyConfig,
+  writeExampleProxyConfig,
+  writeInitialProxyConfig
+} from "../config.js";
 import { buildProxyDoctorReport } from "../doctor.js";
 import { runDev } from "../dev.js";
 import { assertProxyPortAvailable } from "../proxy-runtime.js";
@@ -24,6 +34,7 @@ export function registerModernCommands(program: Command) {
     .option("--cmd <command>")
     .option("--cwd <path>")
     .option("--detect", "Print the inferred config without writing it.")
+    .option("--example", "Write kibaco.config.example.json without writing local config.")
     .option("--force", "Overwrite the existing Kibaco config for this workspace.")
     .option("--interactive", "Review inferred values interactively before writing.")
     .description("Create a Kibaco config for this local workspace.")
@@ -41,9 +52,17 @@ export function registerModernCommands(program: Command) {
         printJson(await buildInitialProxyConfig(answers, process.cwd(), { interactive: false }));
         return;
       }
+      if (options.example) {
+        const config = await buildInitialProxyConfig(answers, process.cwd(), { interactive: Boolean(options.interactive) });
+        const examplePath = await writeExampleProxyConfig(process.cwd(), config);
+        ok(`Created ${examplePath}`);
+        return;
+      }
       const configPath = await writeInitialProxyConfig(undefined, answers, process.cwd(), { interactive: Boolean(options.interactive), force: Boolean(options.force) });
       ok(`${options.force ? "Updated" : "Created"} ${configPath}`);
     });
+
+  registerConfigCommand(program);
 
   program
     .command("list")
@@ -269,6 +288,103 @@ export function registerModernCommands(program: Command) {
       const url = proxyUrl(config, project.host);
       await open(url);
       ok(`Opened ${url}`);
+    });
+
+  program
+    .command("explain")
+    .description("Explain how Kibaco manages this local development environment.")
+    .action(async () => {
+      const discovery = await discoverProxyConfig();
+      console.log("This project uses Kibaco.");
+      console.log("");
+      console.log("Kibaco manages local app commands, local URLs, reverse proxy routing, and optional Docker services.");
+      console.log("");
+      console.log("Config discovery:");
+      for (const item of discovery.checked) {
+        const status = item.used ? "used" : item.found ? "found" : "not found";
+        console.log(`* checked ${item.path}: ${status}`);
+      }
+      if (!discovery.configPath) {
+        console.log("* no Kibaco config found");
+        return;
+      }
+
+      const { path, config } = await loadProxyConfig();
+      console.log("");
+      console.log(`Config file: ${path}`);
+      console.log("Local config is developer-specific and should not be committed.");
+      console.log(`proxyPort: ${config.proxyPort}`);
+      console.log("");
+      console.log("Routes:");
+      for (const project of config.projects) {
+        console.log(`* ${project.name}: ${proxyUrl(config, project.host)} -> ${project.target}`);
+        console.log(`  cwd: ${project.cwd}`);
+        console.log(`  command: ${project.command}`);
+      }
+      console.log("");
+      console.log("Common commands:");
+      console.log("* kibaco config validate");
+      console.log("* kibaco config list-routes");
+      console.log("* kibaco config set-target <projectName> <targetUrl>");
+      console.log("* kibaco dev");
+      console.log("* kibaco doctor");
+      console.log("");
+      console.log("When local URLs fail, check Kibaco config before Caddy, nginx, docker-compose, or system proxy settings.");
+    });
+}
+
+function registerConfigCommand(program: Command) {
+  const configCommand = program.command("config").description("Inspect, validate, and safely edit the Kibaco config.");
+
+  configCommand
+    .command("validate")
+    .description("Validate the current Kibaco config.")
+    .action(async () => {
+      const result = await validateProxyConfig();
+      console.log(`Config file: ${result.path}`);
+      console.log(`Valid: ${result.valid}`);
+      for (const issue of result.errors) {
+        console.log(`${issue.message}${issue.example ? `. Example: ${issue.example}` : ""}`);
+      }
+      if (!result.valid) process.exitCode = 1;
+    });
+
+  configCommand
+    .command("format")
+    .description("Format the current Kibaco config JSON.")
+    .action(async () => {
+      const configPath = await formatProxyConfig();
+      ok(`Formatted ${configPath}`);
+    });
+
+  configCommand
+    .command("list-routes")
+    .description("Show Kibaco proxy routes from the current config.")
+    .action(async () => {
+      const { config } = await loadProxyConfig();
+      for (const project of config.projects) {
+        console.log(`${project.name}`);
+        console.log(`  route: ${proxyUrl(config, project.host)} -> ${project.target}`);
+        console.log(`  host: ${project.host}`);
+        console.log(`  proxyPort: ${config.proxyPort}`);
+        console.log(`  target: ${project.target}`);
+        console.log(`  cwd: ${project.cwd}`);
+        console.log(`  command: ${project.command}`);
+      }
+    });
+
+  configCommand
+    .command("set-target")
+    .argument("<projectName>")
+    .argument("<targetUrl>")
+    .description("Safely update projects[].target for one project.")
+    .action(async (projectName: string, targetUrl: string) => {
+      const result = await updateProjectTarget(projectName, targetUrl);
+      console.log(`Updated project "${result.projectName}" target:`);
+      console.log(`before: ${result.before}`);
+      console.log(`after:  ${result.after}`);
+      console.log(`Config file: ${result.path}`);
+      console.log(`Config valid: ${result.valid}`);
     });
 }
 

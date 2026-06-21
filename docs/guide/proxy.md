@@ -33,3 +33,13 @@ kibaco proxy
 ```
 
 If a Kibaco proxy is already running on `proxyPort`, `kibaco dev` reuses it.
+
+## WebSocket and HMR
+
+Kibaco forwards HTTP Upgrade requests for WebSocket routes such as Next.js `/_next/webpack-hmr`.
+
+That means a proxied Next.js app can keep hot reload working through a stable URL:
+
+```text
+http://web.localhost:8080 -> http://localhost:3000
+```

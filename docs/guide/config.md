@@ -1,9 +1,12 @@
 # Configuration
 
-Kibaco stores workspace config outside the project, under `~/.kibaco`. That config is the source of truth for local app processes, URLs, proxy routing, and Docker services.
+Kibaco stores the project-local config at `.kibaco/config.json`. This file is developer-specific local state and should not be committed.
+
+Commit `kibaco.config.example.json` and the JSON Schema so humans, AI coding assistants, and editors can understand the expected shape without sharing private local ports or commands.
 
 ```json
 {
+  "$schema": "https://kibaco.dev/schemas/kibaco.config.schema.json",
   "workspace": "my-app",
   "proxyPort": 8080,
   "services": [
@@ -35,6 +38,25 @@ Kibaco stores workspace config outside the project, under `~/.kibaco`. That conf
 }
 ```
 
+## Discovery order
+
+Kibaco checks config files in this order:
+
+1. `./.kibaco/config.json`
+2. `./kibaco.config.json`
+3. Registered fallback config under `~/.kibaco/workspaces/...`
+
+Run `kibaco explain` to show exactly which file Kibaco found.
+
+## Git ignore
+
+`kibaco init` adds these entries to `.gitignore` when missing:
+
+```text
+.kibaco/
+kibaco.config.json
+```
+
 ## Repo-local overrides
 
 Add `kibaco.yaml`, `kibaco.yml`, or `kibaco.json` at the workspace root to override the stored config without rerunning `kibaco init`.
@@ -52,6 +74,20 @@ services:
 ```
 
 Projects and services are merged by `name`, so a repo-local file can override just the fields that differ.
+
+## AI-safe commands
+
+Use these commands before editing JSON by hand:
+
+```bash
+kibaco config validate
+kibaco config format
+kibaco config list-routes
+kibaco config set-target web http://localhost:3004
+kibaco explain
+```
+
+When a route such as `http://web.localhost:8080` fails, check `kibaco config list-routes` and `kibaco config validate` before looking for Caddy, nginx, docker-compose, or system proxy settings.
 
 ## Projects
 

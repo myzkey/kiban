@@ -137,6 +137,23 @@ describe("cli smoke", () => {
     );
   });
 
+  it("validates, lists, edits, and explains config through CLI commands", async () => {
+    const cwd = await fixtureDir();
+    process.chdir(cwd);
+
+    await expect(runModernCommand(["config", "validate"])).resolves.toContain("Valid: true");
+    await expect(runModernCommand(["config", "list-routes"])).resolves.toContain("http://web.localhost:8080 -> http://localhost:3000");
+
+    const setOutput = await runModernCommand(["config", "set-target", "web", "http://localhost:3004"]);
+    expect(setOutput).toContain("before: http://localhost:3000");
+    expect(setOutput).toContain("after:  http://localhost:3004");
+    expect(setOutput).toContain("Config valid: true");
+
+    const explainOutput = await runModernCommand(["explain"]);
+    expect(explainOutput).toContain("This project uses Kibaco.");
+    expect(explainOutput).toContain("check Kibaco config before Caddy, nginx, docker-compose, or system proxy");
+  });
+
   it("requests a project restart", async () => {
     const cwd = await fixtureDir();
     process.chdir(cwd);
@@ -211,6 +228,8 @@ describe("cli smoke", () => {
     expect(help).toContain("logs");
     expect(help).toContain("doctor");
     expect(help).toContain("open [project]");
+    expect(help).toContain("config");
+    expect(help).toContain("explain");
     expect(help).not.toContain("legacy");
     expect(help).not.toContain("up [options]");
   });
